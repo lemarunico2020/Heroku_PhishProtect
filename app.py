@@ -286,7 +286,17 @@ def analyze_eml(eml_path):
     except Exception as e:
         logger.error(f"Error al analizar el archivo EML: {str(e)}", exc_info=True)
         raise
-
+@app.route('/')
+def index():
+    return jsonify({
+        "status": "success",
+        "message": "PhishProtect API está en funcionamiento",
+        "version": "1.1",
+        "endpoints": {
+            "analyze_eml": "/api/v1/analyze_eml (POST)"
+        }
+    })
+    
 @app.route('/api/v1/analyze_eml', methods=['POST'])
 def analyze_eml_file():
     """
