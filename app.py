@@ -10,6 +10,7 @@ from email.utils import parsedate_to_datetime
 from ioc_finder import find_iocs
 import json
 from logging.handlers import RotatingFileHandler
+from functools import wraps
 
 app = Flask(__name__)
 
@@ -27,6 +28,44 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+# Obtener la API Key de las variables de entorno
+API_KEY = os.environ.get('PHISHPROTECT_API_KEY')
+if not API_KEY:
+    logger.warning("PHISHPROTECT_API_KEY no está configurada en las variables de entorno")
+
+# Decorador para verificar la API Key
+def require_api_key(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        # Verificar si la API Key está configurada
+        if not API_KEY:
+            logger.error("API Key no configurada en el servidor")
+            return jsonify(create_json_response(
+                status="error",
+                error="API Key not configured on server"
+            )), 500
+            
+        # Verificar si la API Key se proporciona en la solicitud
+        request_api_key = request.headers.get('X-API-Key') or request.args.get('api_key')
+        
+        if not request_api_key:
+            logger.warning("Solicitud sin API Key")
+            return jsonify(create_json_response(
+                status="error",
+                error="API Key required"
+            )), 401
+            
+        # Verificar si la API Key es válida
+        if request_api_key != API_KEY:
+            logger.warning("API Key inválida proporcionada")
+            return jsonify(create_json_response(
+                status="error",
+                error="Invalid API Key"
+            )), 403
+            
+        return f(*args, **kwargs)
+    return decorated_function
 
 def create_json_response(status="success", data=None, error=None):
     """
@@ -286,18 +325,9 @@ def analyze_eml(eml_path):
     except Exception as e:
         logger.error(f"Error al analizar el archivo EML: {str(e)}", exc_info=True)
         raise
-@app.route('/')
-def index():
-    return jsonify({
-        "status": "success",
-        "message": "PhishProtect API está en funcionamiento",
-        "version": "1.1",
-        "endpoints": {
-            "analyze_eml": "/api/v1/analyze_eml (POST)"
-        }
-    })
-    
+
 @app.route('/api/v1/analyze_eml', methods=['POST'])
+@require_api_key
 def analyze_eml_file():
     """
     Endpoint para analizar archivos EML
@@ -355,7 +385,19 @@ def analyze_eml_file():
             error=str(e)
         )), 500
 
+# Nueva ruta para verificar la autenticación
+@app.route('/api/v1/check_auth', methods=['GET'])
+@require_api_key
+def check_auth():
+    """
+    Endpoint para verificar la autenticación de la API Key
+    """
+    return jsonify(create_json_response(
+        status="success",
+        data={"message": "API Key válida"}
+    )), 200
+
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
+    port = int(os.environ.get('PORT', 5001))
     logger.info(f"Iniciando servidor Flask en el puerto {port}")
     app.run(host='0.0.0.0', port=port)
