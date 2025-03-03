@@ -385,6 +385,55 @@ def analyze_eml_file():
             error=str(e)
         )), 500
 
+# Ruta para la página principal
+@app.route('/', methods=['GET'])
+def home():
+    """
+    Página principal que muestra información sobre la API
+    """
+    return """
+    <html>
+    <head>
+        <title>PhishProtect API</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 40px; line-height: 1.6; }
+            h1 { color: #2c3e50; }
+            .container { max-width: 800px; margin: 0 auto; }
+            .endpoint { background-color: #f8f9fa; border-left: 4px solid #4CAF50; padding: 10px; margin-bottom: 20px; }
+            code { background-color: #f1f1f1; padding: 2px 5px; border-radius: 3px; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>PhishProtect API</h1>
+            <p>Esta es la API de análisis de correos electrónicos PhishProtect. Para utilizar esta API, necesitas una API Key válida.</p>
+            
+            <h2>Endpoints disponibles:</h2>
+            
+            <div class="endpoint">
+                <h3>Analizar archivo EML</h3>
+                <p><code>POST /api/v1/analyze_eml</code></p>
+                <p>Este endpoint permite analizar un archivo EML para extraer Indicadores de Compromiso (IOCs).</p>
+                <p>Requiere autenticación mediante API Key.</p>
+            </div>
+            
+            <div class="endpoint">
+                <h3>Verificar autenticación</h3>
+                <p><code>GET /api/v1/check_auth</code></p>
+                <p>Este endpoint permite verificar si tu API Key es válida.</p>
+            </div>
+            
+            <h2>Autenticación</h2>
+            <p>Todas las solicitudes deben incluir una API Key válida de alguna de estas formas:</p>
+            <ul>
+                <li>Como encabezado HTTP: <code>X-API-Key: tu-api-key</code></li>
+                <li>Como parámetro de URL: <code>?api_key=tu-api-key</code></li>
+            </ul>
+        </div>
+    </body>
+    </html>
+    """
+
 # Nueva ruta para verificar la autenticación
 @app.route('/api/v1/check_auth', methods=['GET'])
 @require_api_key
