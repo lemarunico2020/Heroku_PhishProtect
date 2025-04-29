@@ -1,1 +1,18 @@
-
+{
+  "name": "PhishProtect API",
+  "description": "API de análisis de correos electrónicos para detectar phishing",
+  "repository": "https://github.com/tu-usuario/phishprotect",
+  "keywords": ["python", "flask", "email", "phishing", "security"],
+  "env": {
+    "PHISHPROTECT_API_KEY": {
+      "description": "API Key para autenticación",
+      "value": "66f9d998350f109133797ac026acfa35",
+      "required": false
+    }
+  },
+  "buildpacks": [
+    {
+      "url": "heroku/python"
+    }
+  ]
+}
