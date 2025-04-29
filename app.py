@@ -32,10 +32,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Obtener la API Key de las variables de entorno
-API_KEY = os.environ.get('PHISHPROTECT_API_KEY')
+API_KEY = os.environ.get('PHISHPROTECT_API_KEY', '66f9d998350f109133797ac026acfa35')
 if not API_KEY:
-    logger.warning("PHISHPROTECT_API_KEY no está configurada en las variables de entorno")
+    logger.warning("PHISHPROTECT_API_KEY no está configurada en las variables de entorno, usando clave predeterminada")
 
+# Configuración de límites de tamaño (en bytes)
+MAX_FILE_SIZE = 15 * 1024 * 1024  # 15MB máximo para archivos de correo
+MAX_CONTENT_ANALYSIS_SIZE = 1 * 1024 * 1024  # 1MB máximo para contenido a analizar
+MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024  # 10MB máximo para procesar adjuntos completos
 
 # Decorador para verificar la API Key
 def require_api_key(f):
@@ -69,6 +73,16 @@ def require_api_key(f):
             
         return f(*args, **kwargs)
     return decorated_function
+
+def check_file_size(file, max_size_bytes=MAX_FILE_SIZE):
+    """
+    Verifica si el tamaño del archivo excede el límite máximo
+    """
+    file.seek(0, os.SEEK_END)
+    file_size = file.tell()  # Tamaño en bytes
+    file.seek(0)  # Volver al inicio del archivo
+    
+    return file_size <= max_size_bytes, file_size
 
 def create_json_response(status="success", data=None, error=None):
     """
@@ -184,8 +198,13 @@ def extract_body(msg):
                     
                     content = part.get_payload(decode=True)
                     if content:
+                        # Limitar tamaño para evitar problemas con contenido muy grande
+                        if len(content) > MAX_CONTENT_ANALYSIS_SIZE:
+                            logger.warning(f"Contenido de parte muy grande ({len(content)} bytes), limitando a {MAX_CONTENT_ANALYSIS_SIZE} bytes")
+                            content = content[:MAX_CONTENT_ANALYSIS_SIZE]
+                            
                         # Intentar múltiples codificaciones si la primera falla
-                        encodings = [charset, 'utf-8', 'latin1', 'cp1252', 'ascii']
+                        encodings = [charset, 'utf-8', 'latin1', 'cp1252', 'ascii', 'iso-8859-1']
                         decoded = None
                         
                         for encoding in encodings:
@@ -210,12 +229,17 @@ def extract_body(msg):
             charset = msg.get_content_charset() or 'utf-8'
             content = msg.get_payload(decode=True)
             if content:
+                # Limitar tamaño para evitar problemas con contenido muy grande
+                if len(content) > MAX_CONTENT_ANALYSIS_SIZE:
+                    logger.warning(f"Contenido de mensaje simple muy grande ({len(content)} bytes), limitando a {MAX_CONTENT_ANALYSIS_SIZE} bytes")
+                    content = content[:MAX_CONTENT_ANALYSIS_SIZE]
+                    
                 try:
                     decoded = content.decode(charset)
                     body_content.append(decoded)
                 except UnicodeDecodeError:
                     # Intentar con codificaciones alternativas
-                    for encoding in ['utf-8', 'latin1', 'cp1252', 'ascii']:
+                    for encoding in ['utf-8', 'latin1', 'cp1252', 'ascii', 'iso-8859-1']:
                         try:
                             decoded = content.decode(encoding)
                             body_content.append(decoded)
@@ -231,6 +255,7 @@ def extract_body(msg):
 def extract_eml_attachments(msg):
     """
     Extrae archivos adjuntos de un mensaje EML y calcula sus hashes
+    Con optimizaciones para manejar adjuntos grandes
     """
     attachments = []
     
@@ -249,18 +274,26 @@ def extract_eml_attachments(msg):
                     # Obtener datos del adjunto
                     attachment_data = part.get_payload(decode=True)
                     if attachment_data:
-                        # Calcular hashes
-                        hashes = calculate_file_hashes(attachment_data)
-                        
+                        # Calcular hashes solo para adjuntos pequeños
+                        attachment_size = len(attachment_data)
                         attachment_info = {
                             "filename": filename,
                             "content_type": content_type,
-                            "size": len(attachment_data),
-                            "hashes": hashes
+                            "size": attachment_size
                         }
                         
+                        if attachment_size <= MAX_ATTACHMENT_SIZE:
+                            # Calcular hashes
+                            hashes = calculate_file_hashes(attachment_data)
+                            attachment_info["hashes"] = hashes
+                        else:
+                            logger.warning(f"Adjunto demasiado grande para calcular hashes: {filename}, tamaño: {attachment_size} bytes")
+                            attachment_info["hashes"] = {
+                                "info": "Adjunto demasiado grande para calcular hashes"
+                            }
+                        
                         attachments.append(attachment_info)
-                        logger.debug(f"Adjunto procesado: {filename}, tamaño: {len(attachment_data)} bytes")
+                        logger.debug(f"Adjunto procesado: {filename}, tamaño: {attachment_size} bytes")
                 except Exception as e:
                     logger.error(f"Error al procesar adjunto {filename}: {str(e)}", exc_info=True)
     
@@ -269,9 +302,16 @@ def extract_eml_attachments(msg):
 def analyze_eml(eml_path):
     """
     Analiza un archivo EML y extrae IOCs
+    Con optimizaciones para rendimiento mejorado
     """
     logger.info(f"Iniciando análisis del archivo EML: {eml_path}")
     try:
+        # Verificar el tamaño del archivo
+        file_size = os.path.getsize(eml_path)
+        if file_size > MAX_FILE_SIZE:
+            logger.warning(f"Archivo EML demasiado grande: {file_size} bytes")
+            raise ValueError(f"El archivo excede el tamaño máximo permitido de {MAX_FILE_SIZE/1024/1024:.1f} MB")
+        
         with open(eml_path, 'rb') as f:
             logger.debug("Leyendo el archivo EML...")
             msg = BytesParser(policy=policy.default).parse(f)
@@ -330,10 +370,39 @@ def analyze_eml(eml_path):
         full_content = "\n".join(header_content + [email_body])
         logger.debug("Contenido completo preparado para análisis de IOCs")
 
-        # Encontrar IOCs
+        # Limitar el tamaño del contenido a analizar para evitar timeouts
+        if len(full_content) > MAX_CONTENT_ANALYSIS_SIZE:
+            logger.warning(f"Contenido para análisis demasiado grande ({len(full_content)} bytes), limitando a {MAX_CONTENT_ANALYSIS_SIZE} bytes")
+            analyzed_content = full_content[:MAX_CONTENT_ANALYSIS_SIZE]
+        else:
+            analyzed_content = full_content
+
+        # Encontrar IOCs con manejo de excepciones mejorado
         logger.debug("Buscando Indicadores de Compromiso (IOCs)")
-        iocs = find_iocs(full_content)
-        logger.debug(f"IOCs encontrados: {iocs}")
+        try:
+            iocs = find_iocs(analyzed_content)
+            logger.debug(f"IOCs encontrados: {iocs}")
+        except Exception as e:
+            logger.error(f"Error durante la búsqueda de IOCs: {str(e)}", exc_info=True)
+            # Proporcionar un conjunto vacío de IOCs para continuar
+            iocs = {
+                'domains': set(),
+                'email_addresses': set(),
+                'ipv4s': set(),
+                'ipv6s': set(),
+                'urls': set(),
+                'asns': set(),
+                'cidr_ranges': set(),
+                'md5s': set(),
+                'sha1s': set(),
+                'sha256s': set(),
+                'sha512s': set(),
+                'file_paths': set(),
+                'registry_key_paths': set(),
+                'mac_addresses': set(),
+                'user_agents': set()
+            }
+            logger.warning("Usando conjunto vacío de IOCs debido a error en procesamiento")
         
         # Agregar hashes de los adjuntos a los IOCs encontrados
         attachment_md5s = set(iocs.get('md5s', set()))
@@ -341,7 +410,7 @@ def analyze_eml(eml_path):
         attachment_sha256s = set(iocs.get('sha256s', set()))
         
         for attachment in attachments:
-            if 'hashes' in attachment:
+            if 'hashes' in attachment and isinstance(attachment['hashes'], dict) and 'info' not in attachment['hashes']:
                 if 'md5' in attachment['hashes']:
                     attachment_md5s.add(attachment['hashes']['md5'])
                 if 'sha1' in attachment['hashes']:
@@ -419,9 +488,16 @@ def analyze_eml(eml_path):
 def analyze_msg(msg_path):
     """
     Analiza un archivo MSG (Outlook) y extrae IOCs
+    Con optimizaciones para rendimiento mejorado
     """
     logger.info(f"Iniciando análisis del archivo MSG: {msg_path}")
     try:
+        # Verificar el tamaño del archivo
+        file_size = os.path.getsize(msg_path)
+        if file_size > MAX_FILE_SIZE:
+            logger.warning(f"Archivo MSG demasiado grande: {file_size} bytes")
+            raise ValueError(f"El archivo excede el tamaño máximo permitido de {MAX_FILE_SIZE/1024/1024:.1f} MB")
+        
         # Usar extract_msg para abrir el archivo MSG
         logger.debug("Leyendo el archivo MSG...")
         msg = extract_msg.openMsg(msg_path)
@@ -463,6 +539,11 @@ def analyze_msg(msg_path):
         logger.debug("Extrayendo cuerpo del correo electrónico")
         email_body = msg.body
         
+        # Limitar tamaño del cuerpo para evitar problemas de rendimiento
+        if email_body and len(email_body) > MAX_CONTENT_ANALYSIS_SIZE:
+            logger.warning(f"Cuerpo del correo MSG demasiado grande ({len(email_body)} bytes), limitando a {MAX_CONTENT_ANALYSIS_SIZE} bytes")
+            email_body = email_body[:MAX_CONTENT_ANALYSIS_SIZE]
+        
         if not email_body:
             logger.warning("No se pudo extraer el cuerpo del correo electrónico")
         else:
@@ -482,17 +563,25 @@ def analyze_msg(msg_path):
                     attachment_data = attachment.data if hasattr(attachment, 'data') else None
                     
                     if attachment_data:
-                        # Calcular hashes
-                        hashes = calculate_file_hashes(attachment_data)
+                        attachment_size = len(attachment_data)
                         
                         attachment_info = {
                             "filename": attachment.longFilename,
-                            "size": len(attachment_data),
-                            "hashes": hashes
+                            "size": attachment_size
                         }
                         
+                        # Solo calcular hashes para adjuntos pequeños
+                        if attachment_size <= MAX_ATTACHMENT_SIZE:
+                            hashes = calculate_file_hashes(attachment_data)
+                            attachment_info["hashes"] = hashes
+                        else:
+                            logger.warning(f"Adjunto demasiado grande para calcular hashes: {attachment.longFilename}, tamaño: {attachment_size} bytes")
+                            attachment_info["hashes"] = {
+                                "info": "Adjunto demasiado grande para calcular hashes"
+                            }
+                        
                         attachments_info.append(attachment_info)
-                        logger.debug(f"Adjunto procesado: {attachment.longFilename}, tamaño: {len(attachment_data)} bytes")
+                        logger.debug(f"Adjunto procesado: {attachment.longFilename}, tamaño: {attachment_size} bytes")
             except Exception as e:
                 logger.error(f"Error al procesar adjunto {getattr(attachment, 'longFilename', 'desconocido')}: {str(e)}", exc_info=True)
         
@@ -500,10 +589,39 @@ def analyze_msg(msg_path):
         full_content = "\n".join(header_content + [email_body]) if email_body else "\n".join(header_content)
         logger.debug("Contenido completo preparado para análisis de IOCs")
         
-        # Encontrar IOCs
+        # Limitar el tamaño del contenido a analizar para evitar timeouts
+        if len(full_content) > MAX_CONTENT_ANALYSIS_SIZE:
+            logger.warning(f"Contenido para análisis demasiado grande ({len(full_content)} bytes), limitando a {MAX_CONTENT_ANALYSIS_SIZE} bytes")
+            analyzed_content = full_content[:MAX_CONTENT_ANALYSIS_SIZE]
+        else:
+            analyzed_content = full_content
+        
+        # Encontrar IOCs con manejo de excepciones mejorado
         logger.debug("Buscando Indicadores de Compromiso (IOCs)")
-        iocs = find_iocs(full_content)
-        logger.debug(f"IOCs encontrados: {iocs}")
+        try:
+            iocs = find_iocs(analyzed_content)
+            logger.debug(f"IOCs encontrados: {iocs}")
+        except Exception as e:
+            logger.error(f"Error durante la búsqueda de IOCs: {str(e)}", exc_info=True)
+            # Proporcionar un conjunto vacío de IOCs para continuar
+            iocs = {
+                'domains': set(),
+                'email_addresses': set(),
+                'ipv4s': set(),
+                'ipv6s': set(),
+                'urls': set(),
+                'asns': set(),
+                'cidr_ranges': set(),
+                'md5s': set(),
+                'sha1s': set(),
+                'sha256s': set(),
+                'sha512s': set(),
+                'file_paths': set(),
+                'registry_key_paths': set(),
+                'mac_addresses': set(),
+                'user_agents': set()
+            }
+            logger.warning("Usando conjunto vacío de IOCs debido a error en procesamiento")
         
         # Agregar hashes de los adjuntos a los IOCs encontrados
         attachment_md5s = set(iocs.get('md5s', set()))
@@ -511,7 +629,7 @@ def analyze_msg(msg_path):
         attachment_sha256s = set(iocs.get('sha256s', set()))
         
         for attachment in attachments_info:
-            if 'hashes' in attachment:
+            if 'hashes' in attachment and isinstance(attachment['hashes'], dict) and 'info' not in attachment['hashes']:
                 if 'md5' in attachment['hashes']:
                     attachment_md5s.add(attachment['hashes']['md5'])
                 if 'sha1' in attachment['hashes']:
@@ -591,7 +709,7 @@ def analyze_msg(msg_path):
 def analyze_email_file():
     """
     Endpoint unificado para analizar archivos de correo electrónico (EML y MSG)
-    Versión mejorada con mayor flexibilidad
+    Versión mejorada con mayor flexibilidad y optimizaciones
     """
     logger.info("Recibida solicitud de análisis de correo electrónico")
     try:
@@ -632,6 +750,15 @@ def analyze_email_file():
                 error="No file selected"
             )), 400
         
+        # Verificar el tamaño del archivo
+        size_ok, file_size = check_file_size(file, MAX_FILE_SIZE)
+        if not size_ok:
+            logger.warning(f"El archivo excede el tamaño máximo: {file_size} bytes")
+            return jsonify(create_json_response(
+                status="error",
+                error=f"El archivo excede el tamaño máximo permitido de {MAX_FILE_SIZE/1024/1024:.1f} MB (tamaño actual: {file_size/1024/1024:.2f} MB)"
+            )), 413
+            
         # Determinar el tipo de archivo basado en la extensión y contenido
         file_extension = file.filename.lower().split('.')[-1] if '.' in file.filename else ''
         
@@ -724,6 +851,21 @@ def analyze_email_file():
             )
             return jsonify(response), 200
             
+        except ValueError as ve:
+            # Manejar específicamente errores de valor (como tamaño excesivo)
+            logger.warning(f"Error de validación: {str(ve)}")
+            return jsonify(create_json_response(
+                status="error",
+                error=str(ve)
+            )), 413
+            
+        except Exception as e:
+            logger.error(f"Error al analizar el archivo: {str(e)}", exc_info=True)
+            return jsonify(create_json_response(
+                status="error",
+                error=str(e)
+            )), 500
+            
         finally:
             if os.path.exists(temp_filename):
                 logger.debug(f"Eliminando archivo temporal: {temp_filename}")
@@ -771,6 +913,15 @@ def analyze_eml_file():
                 status="error",
                 error="No file selected"
             )), 400
+        
+        # Verificar el tamaño del archivo
+        size_ok, file_size = check_file_size(file, MAX_FILE_SIZE)
+        if not size_ok:
+            logger.warning(f"El archivo excede el tamaño máximo: {file_size} bytes")
+            return jsonify(create_json_response(
+                status="error",
+                error=f"El archivo excede el tamaño máximo permitido de {MAX_FILE_SIZE/1024/1024:.1f} MB (tamaño actual: {file_size/1024/1024:.2f} MB)"
+            )), 413
             
         # Verificar si el archivo tiene extensión EML o si podemos detectar que es un EML
         if not file.filename.lower().endswith('.eml'):
@@ -833,6 +984,21 @@ def analyze_eml_file():
             )
             return jsonify(response), 200
             
+        except ValueError as ve:
+            # Manejar específicamente errores de valor (como tamaño excesivo)
+            logger.warning(f"Error de validación: {str(ve)}")
+            return jsonify(create_json_response(
+                status="error",
+                error=str(ve)
+            )), 413
+            
+        except Exception as e:
+            logger.error(f"Error al analizar el archivo EML: {str(e)}", exc_info=True)
+            return jsonify(create_json_response(
+                status="error",
+                error=str(e)
+            )), 500
+            
         finally:
             if os.path.exists(temp_filename):
                 logger.debug(f"Eliminando archivo temporal: {temp_filename}")
@@ -879,6 +1045,15 @@ def analyze_msg_file():
                 status="error",
                 error="No file selected"
             )), 400
+        
+        # Verificar el tamaño del archivo
+        size_ok, file_size = check_file_size(file, MAX_FILE_SIZE)
+        if not size_ok:
+            logger.warning(f"El archivo excede el tamaño máximo: {file_size} bytes")
+            return jsonify(create_json_response(
+                status="error",
+                error=f"El archivo excede el tamaño máximo permitido de {MAX_FILE_SIZE/1024/1024:.1f} MB (tamaño actual: {file_size/1024/1024:.2f} MB)"
+            )), 413
             
         # Verificar si el archivo tiene extensión MSG o si podemos detectar que es un MSG
         if not file.filename.lower().endswith('.msg'):
@@ -940,6 +1115,21 @@ def analyze_msg_file():
             )
             return jsonify(response), 200
             
+        except ValueError as ve:
+            # Manejar específicamente errores de valor (como tamaño excesivo)
+            logger.warning(f"Error de validación: {str(ve)}")
+            return jsonify(create_json_response(
+                status="error",
+                error=str(ve)
+            )), 413
+            
+        except Exception as e:
+            logger.error(f"Error al analizar el archivo MSG: {str(e)}", exc_info=True)
+            return jsonify(create_json_response(
+                status="error",
+                error=str(e)
+            )), 500
+            
         finally:
             if os.path.exists(temp_filename):
                 logger.debug(f"Eliminando archivo temporal: {temp_filename}")
@@ -968,12 +1158,17 @@ def home():
             .container { max-width: 800px; margin: 0 auto; }
             .endpoint { background-color: #f8f9fa; border-left: 4px solid #4CAF50; padding: 10px; margin-bottom: 20px; }
             code { background-color: #f1f1f1; padding: 2px 5px; border-radius: 3px; }
+            .note { background-color: #fff3cd; padding: 10px; border-left: 4px solid #ffc107; margin-bottom: 20px; }
         </style>
     </head>
     <body>
         <div class="container">
             <h1>PhishProtect API</h1>
             <p>Esta es la API de análisis de correos electrónicos PhishProtect. Para utilizar esta API, necesitas una API Key válida.</p>
+            
+            <div class="note">
+                <strong>Nota:</strong> El tamaño máximo de archivo permitido es de 15MB. Los archivos más grandes serán rechazados.
+            </div>
             
             <h2>Endpoints disponibles:</h2>
             
@@ -1016,6 +1211,13 @@ def home():
             <ul>
                 <li><strong>EML</strong>: Formato estándar de correo electrónico</li>
                 <li><strong>MSG</strong>: Formato de Microsoft Outlook</li>
+            </ul>
+            
+            <h2>Límites y recomendaciones</h2>
+            <ul>
+                <li>Tamaño máximo de archivo: 15MB</li>
+                <li>Se recomienda un tiempo de espera (timeout) de al menos 60 segundos al hacer solicitudes a esta API</li>
+                <li>Para archivos grandes, el análisis puede llevar más tiempo</li>
             </ul>
         </div>
     </body>
