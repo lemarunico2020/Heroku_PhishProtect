@@ -32,14 +32,21 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Obtener la API Key de las variables de entorno
-API_KEY = os.environ.get('PHISHPROTECT_API_KEY', '66f9d998350f109133797ac026acfa35')
+API_KEY = os.environ.get('PHISHPROTECT_API_KEY')
 if not API_KEY:
-    logger.warning("PHISHPROTECT_API_KEY no está configurada en las variables de entorno, usando clave predeterminada")
+    logger.warning("PHISHPROTECT_API_KEY no está configurada en las variables de entorno")
+
+# Obtener límites de tamaño de las variables de entorno
+MAX_FILE_SIZE_MB = int(os.environ.get('MAX_FILE_SIZE_MB', 15))
+MAX_CONTENT_SIZE_MB = int(os.environ.get('MAX_CONTENT_SIZE_MB', 1))
+MAX_ATTACHMENT_SIZE_MB = int(os.environ.get('MAX_ATTACHMENT_SIZE_MB', 10))
 
 # Configuración de límites de tamaño (en bytes)
-MAX_FILE_SIZE = 15 * 1024 * 1024  # 15MB máximo para archivos de correo
-MAX_CONTENT_ANALYSIS_SIZE = 1 * 1024 * 1024  # 1MB máximo para contenido a analizar
-MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024  # 10MB máximo para procesar adjuntos completos
+MAX_FILE_SIZE = MAX_FILE_SIZE_MB * 1024 * 1024
+MAX_CONTENT_ANALYSIS_SIZE = MAX_CONTENT_SIZE_MB * 1024 * 1024
+MAX_ATTACHMENT_SIZE = MAX_ATTACHMENT_SIZE_MB * 1024 * 1024
+
+logger.info(f"Configuración de límites: Archivo máx: {MAX_FILE_SIZE_MB}MB, Contenido máx: {MAX_CONTENT_SIZE_MB}MB, Adjunto máx: {MAX_ATTACHMENT_SIZE_MB}MB")
 
 # Decorador para verificar la API Key
 def require_api_key(f):
