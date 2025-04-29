@@ -32,11 +32,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Obtener la API Key de las variables de entorno
-#API_KEY = os.environ.get('PHISHPROTECT_API_KEY')
-#if not API_KEY:
-#    logger.warning("PHISHPROTECT_API_KEY no está configurada en las variables de entorno")
+API_KEY = os.environ.get('PHISHPROTECT_API_KEY')
+if not API_KEY:
+    logger.warning("PHISHPROTECT_API_KEY no está configurada en las variables de entorno")
 
-API_KEY = '66f9d998350f109133797ac026acfa35'
 
 # Decorador para verificar la API Key
 def require_api_key(f):
