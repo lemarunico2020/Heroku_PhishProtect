@@ -37,8 +37,8 @@ if not API_KEY:
     logger.warning("PHISHPROTECT_API_KEY no está configurada en las variables de entorno")
 
 # Obtener límites de tamaño de las variables de entorno
-MAX_FILE_SIZE_MB = int(os.environ.get('MAX_FILE_SIZE_MB', 15))
-MAX_CONTENT_SIZE_MB = int(os.environ.get('MAX_CONTENT_SIZE_MB', 1))
+MAX_FILE_SIZE_MB = int(os.environ.get('MAX_FILE_SIZE_MB', 18))
+MAX_CONTENT_SIZE_MB = int(os.environ.get('MAX_CONTENT_SIZE_MB', 2))
 MAX_ATTACHMENT_SIZE_MB = int(os.environ.get('MAX_ATTACHMENT_SIZE_MB', 10))
 
 # Configuración de límites de tamaño (en bytes)
@@ -46,7 +46,7 @@ MAX_FILE_SIZE = MAX_FILE_SIZE_MB * 1024 * 1024
 MAX_CONTENT_ANALYSIS_SIZE = MAX_CONTENT_SIZE_MB * 1024 * 1024
 MAX_ATTACHMENT_SIZE = MAX_ATTACHMENT_SIZE_MB * 1024 * 1024
 
-logger.info(f"Configuración de límites: Archivo máx: {MAX_FILE_SIZE_MB}MB, Contenido máx: {MAX_CONTENT_SIZE_MB}MB, Adjunto máx: {MAX_ATTACHMENT_SIZE_MB}MB")
+logger.info(f"Límites configurados: Archivo máx: {MAX_FILE_SIZE_MB}MB, Contenido máx: {MAX_CONTENT_SIZE_MB}MB, Adjunto máx: {MAX_ATTACHMENT_SIZE_MB}MB")
 
 # Decorador para verificar la API Key
 def require_api_key(f):
@@ -88,8 +88,11 @@ def check_file_size(file, max_size_bytes=MAX_FILE_SIZE):
     file.seek(0, os.SEEK_END)
     file_size = file.tell()  # Tamaño en bytes
     file.seek(0)  # Volver al inicio del archivo
+    if file_size > max_size_bytes:
+        logger.warning(f"Archivo rechazado: {file_size/1024/1024:.2f} MB (límite: {max_size_bytes/1024/1024:.1f} MB)")
+        return False, file_size, f"El archivo excede el tamaño máximo permitido de {max_size_bytes/1024/1024:.1f} MB (tamaño actual: {file_size/1024/1024:.2f} MB). Contacte al administrador si necesita procesar archivos más grandes."
     
-    return file_size <= max_size_bytes, file_size
+    return True, file_size, ""
 
 def create_json_response(status="success", data=None, error=None):
     """
@@ -758,12 +761,12 @@ def analyze_email_file():
             )), 400
         
         # Verificar el tamaño del archivo
-        size_ok, file_size = check_file_size(file, MAX_FILE_SIZE)
+        size_ok, file_size, error_message = check_file_size(file, MAX_FILE_SIZE)
         if not size_ok:
             logger.warning(f"El archivo excede el tamaño máximo: {file_size} bytes")
             return jsonify(create_json_response(
                 status="error",
-                error=f"El archivo excede el tamaño máximo permitido de {MAX_FILE_SIZE/1024/1024:.1f} MB (tamaño actual: {file_size/1024/1024:.2f} MB)"
+                error=error_message
             )), 413
             
         # Determinar el tipo de archivo basado en la extensión y contenido
