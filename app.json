@@ -6,7 +6,7 @@
   "env": {
     "PHISHPROTECT_API_KEY": {
       "description": "API Key para autenticación",
-      "value": "66f9d998350f109133797ac026acfa35",
+      "value": "77f9d999550d109133797ad526adfd25",
       "required": false
     }
   },
