@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 # Obtener la API Key de las variables de entorno
 API_KEY = os.environ.get('PHISHPROTECT_API_KEY')
+
 if not API_KEY:
     logger.warning("PHISHPROTECT_API_KEY no está configurada en las variables de entorno")
 
@@ -134,6 +135,60 @@ def calculate_file_hashes(file_data):
         logger.error(f"Error al calcular hashes: {str(e)}", exc_info=True)
         return {}
 
+def parse_authentication_results(msg):
+    """
+    Parsea la cabecera Authentication-Results y extrae los resultados de SPF, DKIM y DMARC
+    """
+    try:
+        auth_results_header = msg.get('authentication-results', '')
+
+        if not auth_results_header:
+            logger.debug("No se encontró la cabecera Authentication-Results")
+            return {
+                "spf": "NOT_FOUND",
+                "dkim": "NOT_FOUND",
+                "dmarc": "NOT_FOUND"
+            }
+
+        logger.debug(f"Authentication-Results header: {auth_results_header}")
+
+        # Convertir a minúsculas para facilitar la búsqueda
+        auth_results_lower = auth_results_header.lower()
+
+        # Extraer resultado SPF
+        spf_result = "NOT_FOUND"
+        spf_match = re.search(r'spf\s*=\s*(pass|fail|neutral|softfail|none|temperror|permerror)', auth_results_lower)
+        if spf_match:
+            spf_result = spf_match.group(1).upper()
+
+        # Extraer resultado DKIM
+        dkim_result = "NOT_FOUND"
+        dkim_match = re.search(r'dkim\s*=\s*(pass|fail|none|neutral|policy|temperror|permerror)', auth_results_lower)
+        if dkim_match:
+            dkim_result = dkim_match.group(1).upper()
+
+        # Extraer resultado DMARC
+        dmarc_result = "NOT_FOUND"
+        dmarc_match = re.search(r'dmarc\s*=\s*(pass|fail|none|temperror|permerror)', auth_results_lower)
+        if dmarc_match:
+            dmarc_result = dmarc_match.group(1).upper()
+
+        logger.debug(f"Parsed authentication results - SPF: {spf_result}, DKIM: {dkim_result}, DMARC: {dmarc_result}")
+
+        return {
+            "spf": spf_result,
+            "dkim": dkim_result,
+            "dmarc": dmarc_result
+        }
+
+    except Exception as e:
+        logger.error(f"Error parsing authentication results: {str(e)}", exc_info=True)
+        return {
+            "spf": "ERROR",
+            "dkim": "ERROR",
+            "dmarc": "ERROR"
+        }
+
 def parse_email_date(msg):
     """
     Función para parsear la fecha del correo electrónico de manera robusta
@@ -167,7 +222,7 @@ def parse_email_date(msg):
                         date_match = re.search(r';(.*?)(?:\(|\r|\n|$)', date_str)
                         if date_match:
                             date_str = date_match.group(1).strip()
-                    
+
                     return parsedate_to_datetime(date_str).isoformat()
                 except Exception as e:
                     logger.warning(f"Error parsing date from {header}: {e}")
@@ -370,7 +425,12 @@ def analyze_eml(eml_path):
         # Obtener la fecha del correo usando la nueva función
         email_date = parse_email_date(msg)
         logger.debug(f"Fecha del correo extraída: {email_date}")
-        
+
+        # Parsear resultados de autenticación (SPF, DKIM, DMARC)
+        logger.debug("Parseando resultados de autenticación")
+        auth_results = parse_authentication_results(msg)
+        logger.debug(f"Resultados de autenticación: {auth_results}")
+
         # Extraer adjuntos y calcular hashes
         logger.debug("Extrayendo archivos adjuntos")
         attachments = extract_eml_attachments(msg)
@@ -483,7 +543,12 @@ def analyze_eml(eml_path):
                 "date": email_date,
                 "body_extracted": bool(email_body),
                 "body": email_body,
-                "attachments": attachments
+                "attachments": attachments,
+                "authentication": {
+                    "spf": auth_results["spf"],
+                    "dkim": auth_results["dkim"],
+                    "dmarc": auth_results["dmarc"]
+                }
             },
             "findings": structured_iocs
         }
@@ -562,7 +627,36 @@ def analyze_msg(msg_path):
         # Obtener la fecha del correo
         email_date = msg.date.isoformat() if msg.date else datetime.utcnow().isoformat()
         logger.debug(f"Fecha del correo extraída: {email_date}")
-        
+
+        # Parsear resultados de autenticación (SPF, DKIM, DMARC) desde las cabeceras del MSG
+        logger.debug("Parseando resultados de autenticación para MSG")
+        auth_results = {"spf": "NOT_FOUND", "dkim": "NOT_FOUND", "dmarc": "NOT_FOUND"}
+        try:
+            # Intentar obtener las cabeceras de transporte si están disponibles
+            if hasattr(msg, 'header') and msg.header:
+                # Buscar en las cabeceras del mensaje
+                header_text = str(msg.header)
+                auth_results_lower = header_text.lower()
+
+                # Extraer resultado SPF
+                spf_match = re.search(r'spf\s*=\s*(pass|fail|neutral|softfail|none|temperror|permerror)', auth_results_lower)
+                if spf_match:
+                    auth_results["spf"] = spf_match.group(1).upper()
+
+                # Extraer resultado DKIM
+                dkim_match = re.search(r'dkim\s*=\s*(pass|fail|none|neutral|policy|temperror|permerror)', auth_results_lower)
+                if dkim_match:
+                    auth_results["dkim"] = dkim_match.group(1).upper()
+
+                # Extraer resultado DMARC
+                dmarc_match = re.search(r'dmarc\s*=\s*(pass|fail|none|temperror|permerror)', auth_results_lower)
+                if dmarc_match:
+                    auth_results["dmarc"] = dmarc_match.group(1).upper()
+
+                logger.debug(f"Resultados de autenticación MSG: {auth_results}")
+        except Exception as e:
+            logger.warning(f"No se pudieron parsear los resultados de autenticación del MSG: {str(e)}")
+
         # Procesar adjuntos y calcular hashes
         logger.debug("Procesando adjuntos del correo MSG")
         attachments_info = []
@@ -702,7 +796,12 @@ def analyze_msg(msg_path):
                 "date": email_date,
                 "body_extracted": bool(email_body),
                 "body": email_body,
-                "attachments": attachments_info
+                "attachments": attachments_info,
+                "authentication": {
+                    "spf": auth_results["spf"],
+                    "dkim": auth_results["dkim"],
+                    "dmarc": auth_results["dmarc"]
+                }
             },
             "findings": structured_iocs
         }
@@ -1185,21 +1284,21 @@ def home():
             <div class="endpoint">
                 <h3>Analizar archivo de correo (Unificado)</h3>
                 <p><code>POST /api/v1/analyze_email</code></p>
-                <p>Este endpoint permite analizar archivos EML o MSG para extraer Indicadores de Compromiso (IOCs).</p>
+                <p>Este endpoint permite analizar archivos EML o MSG para extraer Indicadores de Compromiso (IOCs) y resultados de autenticación (SPF, DKIM, DMARC).</p>
                 <p>Requiere autenticación mediante API Key.</p>
             </div>
-            
+
             <div class="endpoint">
                 <h3>Analizar archivo EML</h3>
                 <p><code>POST /api/v1/analyze_eml</code></p>
-                <p>Este endpoint permite analizar un archivo EML para extraer Indicadores de Compromiso (IOCs).</p>
+                <p>Este endpoint permite analizar un archivo EML para extraer Indicadores de Compromiso (IOCs) y resultados de autenticación (SPF, DKIM, DMARC).</p>
                 <p>Requiere autenticación mediante API Key.</p>
             </div>
-            
+
             <div class="endpoint">
                 <h3>Analizar archivo MSG</h3>
                 <p><code>POST /api/v1/analyze_msg</code></p>
-                <p>Este endpoint permite analizar un archivo MSG para extraer Indicadores de Compromiso (IOCs).</p>
+                <p>Este endpoint permite analizar un archivo MSG para extraer Indicadores de Compromiso (IOCs) y resultados de autenticación (SPF, DKIM, DMARC).</p>
                 <p>Requiere autenticación mediante API Key.</p>
             </div>
             
