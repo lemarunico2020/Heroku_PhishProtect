@@ -189,6 +189,125 @@ def parse_authentication_results(msg):
             "dmarc": "ERROR"
         }
 
+def extract_email_headers(msg):
+    """
+    Extrae cabeceras adicionales del correo electrónico
+    """
+    try:
+        # Extraer Return-Path
+        return_path = msg.get('return-path', None)
+
+        # Extraer Reply-To
+        reply_to = msg.get('reply-to', None)
+
+        # Extraer X-Originating-IP
+        x_originating_ip = msg.get('x-originating-ip', None)
+
+        # Extraer X-Mailer
+        x_mailer = msg.get('x-mailer', None)
+
+        # Extraer Authentication-Results (cabecera completa)
+        authentication_results = msg.get('authentication-results', None)
+
+        # Extraer cadena de Received headers
+        received_chain = []
+        received_headers = msg.get_all('received')
+        if received_headers:
+            for received in received_headers:
+                if received:
+                    received_chain.append(str(received))
+
+        logger.debug(f"Cabeceras extraídas - Return-Path: {return_path}, Reply-To: {reply_to}, X-Originating-IP: {x_originating_ip}")
+
+        return {
+            "return_path": return_path,
+            "reply_to": reply_to,
+            "x_originating_ip": x_originating_ip,
+            "x_mailer": x_mailer,
+            "received_chain": received_chain,
+            "authentication_results": authentication_results
+        }
+
+    except Exception as e:
+        logger.error(f"Error extracting email headers: {str(e)}", exc_info=True)
+        return {
+            "return_path": None,
+            "reply_to": None,
+            "x_originating_ip": None,
+            "x_mailer": None,
+            "received_chain": [],
+            "authentication_results": None
+        }
+
+def extract_msg_headers(msg):
+    """
+    Extrae cabeceras adicionales de un archivo MSG
+    """
+    try:
+        # Inicializar valores por defecto
+        return_path = None
+        reply_to = None
+        x_originating_ip = None
+        x_mailer = None
+        authentication_results = None
+        received_chain = []
+
+        # Intentar extraer cabeceras del header del MSG si está disponible
+        if hasattr(msg, 'header') and msg.header:
+            header_text = str(msg.header)
+
+            # Parsear Return-Path
+            return_path_match = re.search(r'Return-Path:\s*(.+?)(?:\r?\n(?!\s)|$)', header_text, re.IGNORECASE | re.MULTILINE)
+            if return_path_match:
+                return_path = return_path_match.group(1).strip()
+
+            # Parsear Reply-To
+            reply_to_match = re.search(r'Reply-To:\s*(.+?)(?:\r?\n(?!\s)|$)', header_text, re.IGNORECASE | re.MULTILINE)
+            if reply_to_match:
+                reply_to = reply_to_match.group(1).strip()
+
+            # Parsear X-Originating-IP
+            x_originating_ip_match = re.search(r'X-Originating-IP:\s*(.+?)(?:\r?\n(?!\s)|$)', header_text, re.IGNORECASE | re.MULTILINE)
+            if x_originating_ip_match:
+                x_originating_ip = x_originating_ip_match.group(1).strip()
+
+            # Parsear X-Mailer
+            x_mailer_match = re.search(r'X-Mailer:\s*(.+?)(?:\r?\n(?!\s)|$)', header_text, re.IGNORECASE | re.MULTILINE)
+            if x_mailer_match:
+                x_mailer = x_mailer_match.group(1).strip()
+
+            # Parsear Authentication-Results
+            auth_results_match = re.search(r'Authentication-Results:\s*(.+?)(?:\r?\n(?!\s)|$)', header_text, re.IGNORECASE | re.MULTILINE)
+            if auth_results_match:
+                authentication_results = auth_results_match.group(1).strip()
+
+            # Parsear Received headers (puede haber múltiples)
+            received_matches = re.findall(r'Received:\s*(.+?)(?=\r?\nReceived:|\r?\n[A-Z][\w-]*:|$)', header_text, re.IGNORECASE | re.MULTILINE | re.DOTALL)
+            if received_matches:
+                received_chain = [r.strip() for r in received_matches]
+
+        logger.debug(f"Cabeceras MSG extraídas - Return-Path: {return_path}, Reply-To: {reply_to}, X-Originating-IP: {x_originating_ip}")
+
+        return {
+            "return_path": return_path,
+            "reply_to": reply_to,
+            "x_originating_ip": x_originating_ip,
+            "x_mailer": x_mailer,
+            "received_chain": received_chain,
+            "authentication_results": authentication_results
+        }
+
+    except Exception as e:
+        logger.error(f"Error extracting MSG headers: {str(e)}", exc_info=True)
+        return {
+            "return_path": None,
+            "reply_to": None,
+            "x_originating_ip": None,
+            "x_mailer": None,
+            "received_chain": [],
+            "authentication_results": None
+        }
+
 def parse_email_date(msg):
     """
     Función para parsear la fecha del correo electrónico de manera robusta
@@ -431,6 +550,11 @@ def analyze_eml(eml_path):
         auth_results = parse_authentication_results(msg)
         logger.debug(f"Resultados de autenticación: {auth_results}")
 
+        # Extraer cabeceras adicionales del email
+        logger.debug("Extrayendo cabeceras adicionales del email")
+        email_headers = extract_email_headers(msg)
+        logger.debug(f"Cabeceras extraídas: {email_headers}")
+
         # Extraer adjuntos y calcular hashes
         logger.debug("Extrayendo archivos adjuntos")
         attachments = extract_eml_attachments(msg)
@@ -550,6 +674,14 @@ def analyze_eml(eml_path):
                     "dmarc": auth_results["dmarc"]
                 }
             },
+            "cabeceras_email": {
+                "return_path": email_headers["return_path"],
+                "reply_to": email_headers["reply_to"],
+                "x_originating_ip": email_headers["x_originating_ip"],
+                "x_mailer": email_headers["x_mailer"],
+                "received_chain": email_headers["received_chain"],
+                "authentication_results": email_headers["authentication_results"]
+            },
             "findings": structured_iocs
         }
         
@@ -566,13 +698,14 @@ def analyze_msg(msg_path):
     Con optimizaciones para rendimiento mejorado
     """
     logger.info(f"Iniciando análisis del archivo MSG: {msg_path}")
+    msg = None
     try:
         # Verificar el tamaño del archivo
         file_size = os.path.getsize(msg_path)
         if file_size > MAX_FILE_SIZE:
             logger.warning(f"Archivo MSG demasiado grande: {file_size} bytes")
             raise ValueError(f"El archivo excede el tamaño máximo permitido de {MAX_FILE_SIZE/1024/1024:.1f} MB")
-        
+
         # Usar extract_msg para abrir el archivo MSG
         logger.debug("Leyendo el archivo MSG...")
         msg = extract_msg.openMsg(msg_path)
@@ -625,8 +758,24 @@ def analyze_msg(msg_path):
             logger.debug("Cuerpo del correo extraído exitosamente")
         
         # Obtener la fecha del correo
-        email_date = msg.date.isoformat() if msg.date else datetime.utcnow().isoformat()
+        if msg.date:
+            # Verificar si msg.date ya es un string o un objeto datetime
+            if isinstance(msg.date, str):
+                email_date = msg.date
+            else:
+                try:
+                    email_date = msg.date.isoformat()
+                except AttributeError:
+                    # Si no tiene isoformat, intentar convertir a string
+                    email_date = str(msg.date)
+        else:
+            email_date = datetime.utcnow().isoformat()
         logger.debug(f"Fecha del correo extraída: {email_date}")
+
+        # Extraer cabeceras adicionales del MSG
+        logger.debug("Extrayendo cabeceras adicionales del MSG")
+        msg_headers = extract_msg_headers(msg)
+        logger.debug(f"Cabeceras MSG extraídas: {msg_headers}")
 
         # Parsear resultados de autenticación (SPF, DKIM, DMARC) desde las cabeceras del MSG
         logger.debug("Parseando resultados de autenticación para MSG")
@@ -803,15 +952,31 @@ def analyze_msg(msg_path):
                     "dmarc": auth_results["dmarc"]
                 }
             },
+            "cabeceras_email": {
+                "return_path": msg_headers["return_path"],
+                "reply_to": msg_headers["reply_to"],
+                "x_originating_ip": msg_headers["x_originating_ip"],
+                "x_mailer": msg_headers["x_mailer"],
+                "received_chain": msg_headers["received_chain"],
+                "authentication_results": msg_headers["authentication_results"]
+            },
             "findings": structured_iocs
         }
-        
+
         logger.info("Análisis completado con éxito")
         return analysis_result
-        
+
     except Exception as e:
         logger.error(f"Error al analizar el archivo MSG: {str(e)}", exc_info=True)
         raise
+    finally:
+        # Cerrar el objeto MSG para liberar el archivo
+        if msg is not None:
+            try:
+                msg.close()
+                logger.debug("Objeto MSG cerrado correctamente")
+            except Exception as e:
+                logger.warning(f"Error al cerrar el objeto MSG: {str(e)}")
 
 @app.route('/api/v1/analyze_email', methods=['POST'])
 @require_api_key
@@ -912,10 +1077,11 @@ def analyze_email_file():
                             
                             # Intentar abrir como MSG
                             try:
-                                extract_msg.openMsg(temp_filename)
+                                test_msg = extract_msg.openMsg(temp_filename)
+                                test_msg.close()  # Cerrar inmediatamente después de verificar
                                 file_type_detected = 'msg'
                                 logger.debug("Archivo detectado como MSG por su contenido")
-                                
+
                             except Exception as e:
                                 logger.debug(f"No es un archivo MSG válido: {str(e)}")
                                 
@@ -1173,9 +1339,10 @@ def analyze_msg_file():
                 
             try:
                 try:
-                    extract_msg.openMsg(temp_check_filename)
+                    test_msg = extract_msg.openMsg(temp_check_filename)
+                    test_msg.close()  # Cerrar inmediatamente después de verificar
                     logger.debug("Archivo detectado como MSG por su contenido a pesar de no tener extensión .msg")
-                    
+
                 except Exception as e:
                     logger.warning("El archivo no es un archivo MSG válido")
                     
