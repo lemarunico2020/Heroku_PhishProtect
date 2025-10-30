@@ -1,10 +1,10 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, Response
 import tempfile
 import os
 import logging
 import re
 import hashlib
-from datetime import datetime
+from datetime import datetime, timezone
 from email import policy
 from email.parser import BytesParser
 from email.utils import parsedate_to_datetime
@@ -56,7 +56,7 @@ def require_api_key(f):
         # Verificar si la API Key está configurada
         if not API_KEY:
             logger.error("API Key no configurada en el servidor")
-            return jsonify(create_json_response(
+            return json_response(create_json_response(
                 status="error",
                 error="API Key not configured on server"
             )), 500
@@ -66,7 +66,7 @@ def require_api_key(f):
         
         if not request_api_key:
             logger.warning("Solicitud sin API Key")
-            return jsonify(create_json_response(
+            return json_response(create_json_response(
                 status="error",
                 error="API Key required"
             )), 401
@@ -74,7 +74,7 @@ def require_api_key(f):
         # Verificar si la API Key es válida
         if request_api_key != API_KEY:
             logger.warning("API Key inválida proporcionada")
-            return jsonify(create_json_response(
+            return json_response(create_json_response(
                 status="error",
                 error="Invalid API Key"
             )), 403
@@ -101,16 +101,26 @@ def create_json_response(status="success", data=None, error=None):
     """
     response = {
         "status": status,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "version": "1.1"
     }
-    
+
     if data is not None:
         response["data"] = data
     if error is not None:
         response["error"] = error
-        
+
     return response
+
+def json_response(data, status_code=200):
+    """
+    Crea una respuesta HTTP con JSON formateado (indentado)
+    """
+    return Response(
+        json.dumps(data, indent=2, ensure_ascii=False),
+        status=status_code,
+        mimetype='application/json'
+    )
 
 def calculate_file_hashes(file_data):
     """
@@ -257,27 +267,31 @@ def extract_msg_headers(msg):
             header_text = str(msg.header)
 
             # Parsear Return-Path
-            return_path_match = re.search(r'Return-Path:\s*(.+?)(?:\r?\n(?!\s)|$)', header_text, re.IGNORECASE | re.MULTILINE)
+            return_path_match = re.search(r'Return-Path:\s*(.+?)(?:\r?\n(?=[A-Z][\w-]*:)|\r?\n(?!\s)|$)', header_text, re.IGNORECASE | re.MULTILINE)
             if return_path_match:
                 return_path = return_path_match.group(1).strip()
 
             # Parsear Reply-To
-            reply_to_match = re.search(r'Reply-To:\s*(.+?)(?:\r?\n(?!\s)|$)', header_text, re.IGNORECASE | re.MULTILINE)
+            reply_to_match = re.search(r'Reply-To:\s*(.+?)(?:\r?\n(?=[A-Z][\w-]*:)|\r?\n(?!\s)|$)', header_text, re.IGNORECASE | re.MULTILINE)
             if reply_to_match:
                 reply_to = reply_to_match.group(1).strip()
+                # Limpiar posibles residuos de otros headers
+                # Si contiene ":" seguido de otro header name, es un error de parseo
+                if re.search(r'[A-Z][\w-]*:', reply_to):
+                    reply_to = None
 
             # Parsear X-Originating-IP
-            x_originating_ip_match = re.search(r'X-Originating-IP:\s*(.+?)(?:\r?\n(?!\s)|$)', header_text, re.IGNORECASE | re.MULTILINE)
+            x_originating_ip_match = re.search(r'X-Originating-IP:\s*(.+?)(?:\r?\n(?=[A-Z][\w-]*:)|\r?\n(?!\s)|$)', header_text, re.IGNORECASE | re.MULTILINE)
             if x_originating_ip_match:
                 x_originating_ip = x_originating_ip_match.group(1).strip()
 
             # Parsear X-Mailer
-            x_mailer_match = re.search(r'X-Mailer:\s*(.+?)(?:\r?\n(?!\s)|$)', header_text, re.IGNORECASE | re.MULTILINE)
+            x_mailer_match = re.search(r'X-Mailer:\s*(.+?)(?:\r?\n(?=[A-Z][\w-]*:)|\r?\n(?!\s)|$)', header_text, re.IGNORECASE | re.MULTILINE)
             if x_mailer_match:
                 x_mailer = x_mailer_match.group(1).strip()
 
             # Parsear Authentication-Results
-            auth_results_match = re.search(r'Authentication-Results:\s*(.+?)(?:\r?\n(?!\s)|$)', header_text, re.IGNORECASE | re.MULTILINE)
+            auth_results_match = re.search(r'Authentication-Results:\s*(.+?)(?:\r?\n(?=[A-Z][\w-]*:)|\r?\n(?!\s)|$)', header_text, re.IGNORECASE | re.MULTILINE)
             if auth_results_match:
                 authentication_results = auth_results_match.group(1).strip()
 
@@ -349,11 +363,11 @@ def parse_email_date(msg):
 
         # Si no se encuentra ninguna fecha válida, devolver la fecha actual
         logger.warning("No valid date found in email headers, using current timestamp")
-        return datetime.utcnow().isoformat()
+        return datetime.now(timezone.utc).isoformat()
 
     except Exception as e:
         logger.error(f"Error in parse_email_date: {str(e)}", exc_info=True)
-        return datetime.utcnow().isoformat()
+        return datetime.now(timezone.utc).isoformat()
 
 def extract_body(msg):
     """
@@ -560,8 +574,23 @@ def analyze_eml(eml_path):
         attachments = extract_eml_attachments(msg)
         logger.debug(f"Se encontraron {len(attachments)} adjuntos")
 
-        # Combinar todo el contenido para análisis
-        full_content = "\n".join(header_content + [email_body])
+        # Preparar contenido adicional de cabeceras para análisis de IOCs
+        additional_headers = []
+        if email_headers.get('return_path'):
+            additional_headers.append(f"Return-Path: {email_headers['return_path']}")
+        if email_headers.get('reply_to'):
+            additional_headers.append(f"Reply-To: {email_headers['reply_to']}")
+        if email_headers.get('x_originating_ip'):
+            additional_headers.append(f"X-Originating-IP: {email_headers['x_originating_ip']}")
+        if email_headers.get('x_mailer'):
+            additional_headers.append(f"X-Mailer: {email_headers['x_mailer']}")
+        if email_headers.get('received_chain'):
+            additional_headers.extend(email_headers['received_chain'])
+        if email_headers.get('authentication_results'):
+            additional_headers.append(f"Authentication-Results: {email_headers['authentication_results']}")
+
+        # Combinar todo el contenido para análisis (incluye cabeceras adicionales)
+        full_content = "\n".join(header_content + additional_headers + [email_body])
         logger.debug("Contenido completo preparado para análisis de IOCs")
 
         # Limitar el tamaño del contenido a analizar para evitar timeouts
@@ -649,14 +678,14 @@ def analyze_eml(eml_path):
         }
         
         # Generar ID único para el análisis
-        dt = datetime.utcnow()
+        dt = datetime.now(timezone.utc)
         millis = dt.microsecond // 1000
         analysis_id = f"IOC-{dt.strftime('%Y%m%d-%H%M%S')}-{millis:03d}"
         
         analysis_result = {
             "analysis_metadata": {
                 "analysis_id": analysis_id,
-                "analysis_timestamp": datetime.utcnow().isoformat(),
+                "analysis_timestamp": datetime.now(timezone.utc).isoformat(),
                 "file_analyzed": eml_path,
                 "file_type": "eml"
             },
@@ -769,7 +798,7 @@ def analyze_msg(msg_path):
                     # Si no tiene isoformat, intentar convertir a string
                     email_date = str(msg.date)
         else:
-            email_date = datetime.utcnow().isoformat()
+            email_date = datetime.now(timezone.utc).isoformat()
         logger.debug(f"Fecha del correo extraída: {email_date}")
 
         # Extraer cabeceras adicionales del MSG
@@ -837,9 +866,24 @@ def analyze_msg(msg_path):
                         logger.debug(f"Adjunto procesado: {attachment.longFilename}, tamaño: {attachment_size} bytes")
             except Exception as e:
                 logger.error(f"Error al procesar adjunto {getattr(attachment, 'longFilename', 'desconocido')}: {str(e)}", exc_info=True)
-        
-        # Combinar todo el contenido para análisis
-        full_content = "\n".join(header_content + [email_body]) if email_body else "\n".join(header_content)
+
+        # Preparar contenido adicional de cabeceras para análisis de IOCs
+        additional_headers = []
+        if msg_headers.get('return_path'):
+            additional_headers.append(f"Return-Path: {msg_headers['return_path']}")
+        if msg_headers.get('reply_to'):
+            additional_headers.append(f"Reply-To: {msg_headers['reply_to']}")
+        if msg_headers.get('x_originating_ip'):
+            additional_headers.append(f"X-Originating-IP: {msg_headers['x_originating_ip']}")
+        if msg_headers.get('x_mailer'):
+            additional_headers.append(f"X-Mailer: {msg_headers['x_mailer']}")
+        if msg_headers.get('received_chain'):
+            additional_headers.extend(msg_headers['received_chain'])
+        if msg_headers.get('authentication_results'):
+            additional_headers.append(f"Authentication-Results: {msg_headers['authentication_results']}")
+
+        # Combinar todo el contenido para análisis (incluye cabeceras adicionales)
+        full_content = "\n".join(header_content + additional_headers + [email_body]) if email_body else "\n".join(header_content + additional_headers)
         logger.debug("Contenido completo preparado para análisis de IOCs")
         
         # Limitar el tamaño del contenido a analizar para evitar timeouts
@@ -927,14 +971,14 @@ def analyze_msg(msg_path):
         }
         
         # Generar ID único para el análisis
-        dt = datetime.utcnow()
+        dt = datetime.now(timezone.utc)
         millis = dt.microsecond // 1000
         analysis_id = f"IOC-{dt.strftime('%Y%m%d-%H%M%S')}-{millis:03d}"
         
         analysis_result = {
             "analysis_metadata": {
                 "analysis_id": analysis_id,
-                "analysis_timestamp": datetime.utcnow().isoformat(),
+                "analysis_timestamp": datetime.now(timezone.utc).isoformat(),
                 "file_analyzed": msg_path,
                 "file_type": "msg"
             },
@@ -1010,7 +1054,7 @@ def analyze_email_file():
                 logger.debug(f"Encontrado archivo en campo alternativo: {file_field_name}")
             else:
                 logger.warning("No se ha subido ningún archivo")
-                return jsonify(create_json_response(
+                return json_response(create_json_response(
                     status="error",
                     error="No file uploaded"
                 )), 400
@@ -1019,7 +1063,7 @@ def analyze_email_file():
         
         if file.filename == '':
             logger.warning("No se ha seleccionado ningún archivo")
-            return jsonify(create_json_response(
+            return json_response(create_json_response(
                 status="error",
                 error="No file selected"
             )), 400
@@ -1028,7 +1072,7 @@ def analyze_email_file():
         size_ok, file_size, error_message = check_file_size(file, MAX_FILE_SIZE)
         if not size_ok:
             logger.warning(f"El archivo excede el tamaño máximo: {file_size} bytes")
-            return jsonify(create_json_response(
+            return json_response(create_json_response(
                 status="error",
                 error=error_message
             )), 413
@@ -1097,7 +1141,7 @@ def analyze_email_file():
                     
                 logger.warning("No se pudo determinar el tipo de archivo")
                 
-                return jsonify(create_json_response(
+                return json_response(create_json_response(
                     status="error",
                     error="File must be an EML or MSG file. Could not determine file type."
                 
@@ -1124,19 +1168,19 @@ def analyze_email_file():
                 status="success",
                 data=results
             )
-            return jsonify(response), 200
+            return json_response(response, 200)
             
         except ValueError as ve:
             # Manejar específicamente errores de valor (como tamaño excesivo)
             logger.warning(f"Error de validación: {str(ve)}")
-            return jsonify(create_json_response(
+            return json_response(create_json_response(
                 status="error",
                 error=str(ve)
             )), 413
             
         except Exception as e:
             logger.error(f"Error al analizar el archivo: {str(e)}", exc_info=True)
-            return jsonify(create_json_response(
+            return json_response(create_json_response(
                 status="error",
                 error=str(e)
             )), 500
@@ -1148,7 +1192,7 @@ def analyze_email_file():
                 
     except Exception as e:
         logger.error(f"Error al procesar el archivo: {str(e)}", exc_info=True)
-        return jsonify(create_json_response(
+        return json_response(create_json_response(
             status="error",
             error=str(e)
         )), 500
@@ -1173,7 +1217,7 @@ def analyze_eml_file():
             
             if not file:
                 logger.warning("No se ha subido ningún archivo EML")
-                return jsonify(create_json_response(
+                return json_response(create_json_response(
                     status="error",
                     error="No EML file uploaded"
                 )), 400
@@ -1184,7 +1228,7 @@ def analyze_eml_file():
         
         if file.filename == '':
             logger.warning("No se ha seleccionado ningún archivo")
-            return jsonify(create_json_response(
+            return json_response(create_json_response(
                 status="error",
                 error="No file selected"
             )), 400
@@ -1193,7 +1237,7 @@ def analyze_eml_file():
         size_ok, file_size = check_file_size(file, MAX_FILE_SIZE)
         if not size_ok:
             logger.warning(f"El archivo excede el tamaño máximo: {file_size} bytes")
-            return jsonify(create_json_response(
+            return json_response(create_json_response(
                 status="error",
                 error=f"El archivo excede el tamaño máximo permitido de {MAX_FILE_SIZE/1024/1024:.1f} MB (tamaño actual: {file_size/1024/1024:.2f} MB)"
             )), 413
@@ -1218,7 +1262,7 @@ def analyze_eml_file():
                         if os.path.exists(temp_check_filename):
                             os.remove(temp_check_filename)
                             
-                        return jsonify(create_json_response(
+                        return json_response(create_json_response(
                             status="error",
                             error="File must be an EML file"
                         
@@ -1231,7 +1275,7 @@ def analyze_eml_file():
                 if os.path.exists(temp_check_filename):
                     os.remove(temp_check_filename)
                     
-                return jsonify(create_json_response(
+                return json_response(create_json_response(
                     status="error",
                     error="File must be an EML file"
                 
@@ -1257,19 +1301,19 @@ def analyze_eml_file():
                 status="success",
                 data=results
             )
-            return jsonify(response), 200
+            return json_response(response, 200)
             
         except ValueError as ve:
             # Manejar específicamente errores de valor (como tamaño excesivo)
             logger.warning(f"Error de validación: {str(ve)}")
-            return jsonify(create_json_response(
+            return json_response(create_json_response(
                 status="error",
                 error=str(ve)
             )), 413
             
         except Exception as e:
             logger.error(f"Error al analizar el archivo EML: {str(e)}", exc_info=True)
-            return jsonify(create_json_response(
+            return json_response(create_json_response(
                 status="error",
                 error=str(e)
             )), 500
@@ -1281,7 +1325,7 @@ def analyze_eml_file():
                 
     except Exception as e:
         logger.error(f"Error al procesar el archivo EML: {str(e)}", exc_info=True)
-        return jsonify(create_json_response(
+        return json_response(create_json_response(
             status="error",
             error=str(e)
         )), 500
@@ -1305,7 +1349,7 @@ def analyze_msg_file():
             
             if not file:
                 logger.warning("No se ha subido ningún archivo MSG")
-                return jsonify(create_json_response(
+                return json_response(create_json_response(
                     status="error",
                     error="No MSG file uploaded"
                 )), 400
@@ -1316,7 +1360,7 @@ def analyze_msg_file():
         
         if file.filename == '':
             logger.warning("No se ha seleccionado ningún archivo")
-            return jsonify(create_json_response(
+            return json_response(create_json_response(
                 status="error",
                 error="No file selected"
             )), 400
@@ -1325,7 +1369,7 @@ def analyze_msg_file():
         size_ok, file_size = check_file_size(file, MAX_FILE_SIZE)
         if not size_ok:
             logger.warning(f"El archivo excede el tamaño máximo: {file_size} bytes")
-            return jsonify(create_json_response(
+            return json_response(create_json_response(
                 status="error",
                 error=f"El archivo excede el tamaño máximo permitido de {MAX_FILE_SIZE/1024/1024:.1f} MB (tamaño actual: {file_size/1024/1024:.2f} MB)"
             )), 413
@@ -1350,7 +1394,7 @@ def analyze_msg_file():
                     if os.path.exists(temp_check_filename):
                         os.remove(temp_check_filename)
                         
-                    return jsonify(create_json_response(
+                    return json_response(create_json_response(
                         status="error",
                         error="File must be an MSG file"
                     
@@ -1363,7 +1407,7 @@ def analyze_msg_file():
                 if os.path.exists(temp_check_filename):
                     os.remove(temp_check_filename)
                     
-                return jsonify(create_json_response(
+                return json_response(create_json_response(
                     status="error",
                     error="File must be an MSG file"
                 
@@ -1389,19 +1433,19 @@ def analyze_msg_file():
                 status="success",
                 data=results
             )
-            return jsonify(response), 200
+            return json_response(response, 200)
             
         except ValueError as ve:
             # Manejar específicamente errores de valor (como tamaño excesivo)
             logger.warning(f"Error de validación: {str(ve)}")
-            return jsonify(create_json_response(
+            return json_response(create_json_response(
                 status="error",
                 error=str(ve)
             )), 413
             
         except Exception as e:
             logger.error(f"Error al analizar el archivo MSG: {str(e)}", exc_info=True)
-            return jsonify(create_json_response(
+            return json_response(create_json_response(
                 status="error",
                 error=str(e)
             )), 500
@@ -1413,7 +1457,7 @@ def analyze_msg_file():
                 
     except Exception as e:
         logger.error(f"Error al procesar el archivo MSG: {str(e)}", exc_info=True)
-        return jsonify(create_json_response(
+        return json_response(create_json_response(
             status="error",
             error=str(e)
         )), 500
@@ -1507,7 +1551,7 @@ def check_auth():
     """
     Endpoint para verificar la autenticación de la API Key
     """
-    return jsonify(create_json_response(
+    return json_response(create_json_response(
         status="success",
         data={"message": "API Key válida"}
     )), 200
