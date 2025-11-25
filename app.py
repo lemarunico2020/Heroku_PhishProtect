@@ -32,7 +32,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Obtener la API Key de las variables de entorno
-API_KEY = os.environ.get('PHISHPROTECT_API_KEY')
+  API_KEY = os.environ.get('PHISHPROTECT_API_KEY')  # Comentado para pruebas locales
+# API_KEY = "mi-api-key-de-prueba"   TODO: Cambiar por variable de entorno en producción
 
 if not API_KEY:
     logger.warning("PHISHPROTECT_API_KEY no está configurada en las variables de entorno")
@@ -147,43 +148,52 @@ def calculate_file_hashes(file_data):
 
 def parse_authentication_results(msg):
     """
-    Parsea la cabecera Authentication-Results y extrae los resultados de SPF, DKIM y DMARC
+    Parsea las cabeceras de autenticación (Authentication-Results, ARC-Authentication-Results, DKIM-Signature)
+    y extrae los resultados de SPF, DKIM y DMARC
     """
     try:
+        spf_result = "NOT_FOUND"
+        dkim_result = "NOT_FOUND"
+        dmarc_result = "NOT_FOUND"
+
+        # Buscar en Authentication-Results estándar
         auth_results_header = msg.get('authentication-results', '')
 
+        # Si no existe, buscar en ARC-Authentication-Results (puede haber múltiples)
         if not auth_results_header:
-            logger.debug("No se encontró la cabecera Authentication-Results")
-            return {
-                "spf": "NOT_FOUND",
-                "dkim": "NOT_FOUND",
-                "dmarc": "NOT_FOUND"
-            }
+            arc_auth_results = msg.get_all('arc-authentication-results')
+            if arc_auth_results:
+                # Combinar todas las cabeceras ARC-Authentication-Results
+                auth_results_header = ' '.join([str(h) for h in arc_auth_results if h])
+                logger.debug(f"Usando ARC-Authentication-Results: {auth_results_header}")
 
-        logger.debug(f"Authentication-Results header: {auth_results_header}")
+        if auth_results_header:
+            logger.debug(f"Authentication-Results header: {auth_results_header}")
+            auth_results_lower = auth_results_header.lower()
 
-        # Convertir a minúsculas para facilitar la búsqueda
-        auth_results_lower = auth_results_header.lower()
+            # Extraer resultado SPF
+            spf_match = re.search(r'spf\s*=\s*(pass|fail|neutral|softfail|none|temperror|permerror)', auth_results_lower)
+            if spf_match:
+                spf_result = spf_match.group(1).upper()
 
-        # Extraer resultado SPF
-        spf_result = "NOT_FOUND"
-        spf_match = re.search(r'spf\s*=\s*(pass|fail|neutral|softfail|none|temperror|permerror)', auth_results_lower)
-        if spf_match:
-            spf_result = spf_match.group(1).upper()
+            # Extraer resultado DKIM
+            dkim_match = re.search(r'dkim\s*=\s*(pass|fail|none|neutral|policy|temperror|permerror)', auth_results_lower)
+            if dkim_match:
+                dkim_result = dkim_match.group(1).upper()
 
-        # Extraer resultado DKIM
-        dkim_result = "NOT_FOUND"
-        dkim_match = re.search(r'dkim\s*=\s*(pass|fail|none|neutral|policy|temperror|permerror)', auth_results_lower)
-        if dkim_match:
-            dkim_result = dkim_match.group(1).upper()
+            # Extraer resultado DMARC
+            dmarc_match = re.search(r'dmarc\s*=\s*(pass|fail|none|temperror|permerror)', auth_results_lower)
+            if dmarc_match:
+                dmarc_result = dmarc_match.group(1).upper()
 
-        # Extraer resultado DMARC
-        dmarc_result = "NOT_FOUND"
-        dmarc_match = re.search(r'dmarc\s*=\s*(pass|fail|none|temperror|permerror)', auth_results_lower)
-        if dmarc_match:
-            dmarc_result = dmarc_match.group(1).upper()
+        # Si aún no encontramos DKIM, buscar en DKIM-Signature header
+        if dkim_result == "NOT_FOUND":
+            dkim_signature = msg.get('dkim-signature')
+            if dkim_signature:
+                dkim_result = "SIGNATURE_PRESENT"
+                logger.debug("DKIM-Signature encontrada")
 
-        logger.debug(f"Parsed authentication results - SPF: {spf_result}, DKIM: {dkim_result}, DMARC: {dmarc_result}")
+        logger.info(f"Resultados de autenticación - SPF: {spf_result}, DKIM: {dkim_result}, DMARC: {dmarc_result}")
 
         return {
             "spf": spf_result,
@@ -204,20 +214,24 @@ def extract_email_headers(msg):
     Extrae cabeceras adicionales del correo electrónico
     """
     try:
-        # Extraer Return-Path
+        # Logging de todas las cabeceras disponibles para diagnóstico
+        all_headers = list(msg.keys())
+        logger.info(f"Cabeceras disponibles en EML: {all_headers}")
+
+        # Extraer cabeceras estándar
         return_path = msg.get('return-path', None)
-
-        # Extraer Reply-To
         reply_to = msg.get('reply-to', None)
-
-        # Extraer X-Originating-IP
         x_originating_ip = msg.get('x-originating-ip', None)
-
-        # Extraer X-Mailer
         x_mailer = msg.get('x-mailer', None)
 
-        # Extraer Authentication-Results (cabecera completa)
+        # Extraer Authentication-Results (probar ambas variantes)
         authentication_results = msg.get('authentication-results', None)
+
+        # Si no existe, buscar en ARC-Authentication-Results
+        if not authentication_results:
+            arc_auth_results = msg.get_all('arc-authentication-results')
+            if arc_auth_results:
+                authentication_results = ' | '.join([str(h) for h in arc_auth_results if h])
 
         # Extraer cadena de Received headers
         received_chain = []
@@ -227,7 +241,7 @@ def extract_email_headers(msg):
                 if received:
                     received_chain.append(str(received))
 
-        logger.debug(f"Cabeceras extraídas - Return-Path: {return_path}, Reply-To: {reply_to}, X-Originating-IP: {x_originating_ip}")
+        logger.info(f"Cabeceras extraídas - Return-Path: {return_path}, Reply-To: {reply_to}, X-Originating-IP: {x_originating_ip}, Received: {len(received_chain)}, Auth: {'Sí' if authentication_results else 'No'}")
 
         return {
             "return_path": return_path,
@@ -450,6 +464,123 @@ def extract_body(msg):
 
     return "\n".join(body_content)
 
+def process_iocs_with_attachments(iocs, attachments):
+    """
+    Agrega hashes de adjuntos a los IOCs encontrados
+    """
+    attachment_md5s = set(iocs.get('md5s', set()))
+    attachment_sha1s = set(iocs.get('sha1s', set()))
+    attachment_sha256s = set(iocs.get('sha256s', set()))
+
+    for attachment in attachments:
+        if 'hashes' in attachment and isinstance(attachment['hashes'], dict) and 'info' not in attachment['hashes']:
+            if 'md5' in attachment['hashes']:
+                attachment_md5s.add(attachment['hashes']['md5'])
+            if 'sha1' in attachment['hashes']:
+                attachment_sha1s.add(attachment['hashes']['sha1'])
+            if 'sha256' in attachment['hashes']:
+                attachment_sha256s.add(attachment['hashes']['sha256'])
+
+    iocs['md5s'] = attachment_md5s
+    iocs['sha1s'] = attachment_sha1s
+    iocs['sha256s'] = attachment_sha256s
+    return iocs
+
+def filter_recipient_iocs(iocs, recipient_addresses, recipient_domains):
+    """
+    Filtra direcciones de email y dominios que pertenecen a destinatarios
+    """
+    filtered_emails = set(addr for addr in iocs.get('email_addresses', set())
+                        if addr.lower() not in recipient_addresses)
+    filtered_domains = set(domain for domain in iocs.get('domains', set())
+                         if domain.lower() not in recipient_domains)
+    return filtered_emails, filtered_domains
+
+def structure_iocs(iocs, filtered_emails, filtered_domains):
+    """
+    Estructura los IOCs en el formato de respuesta
+    """
+    return {
+        "network_indicators": {
+            "domains": list(filtered_domains),
+            "ipv4": list(iocs.get('ipv4s', set())),
+            "ipv6": list(iocs.get('ipv6s', set())),
+            "urls": list(iocs.get('urls', set())),
+            "email_addresses": list(filtered_emails),
+            "asns": list(iocs.get('asns', set())),
+            "cidr_ranges": list(iocs.get('cidr_ranges', set()))
+        },
+        "file_indicators": {
+            "md5_hashes": list(iocs.get('md5s', set())),
+            "sha1_hashes": list(iocs.get('sha1s', set())),
+            "sha256_hashes": list(iocs.get('sha256s', set())),
+            "sha512_hashes": list(iocs.get('sha512s', set())),
+            "file_paths": list(iocs.get('file_paths', set()))
+        },
+        "system_indicators": {
+            "registry_keys": list(iocs.get('registry_key_paths', set())),
+            "mac_addresses": list(iocs.get('mac_addresses', set())),
+            "user_agents": list(iocs.get('user_agents', set()))
+        }
+    }
+
+def build_analysis_result(file_path, file_type, email_from, email_to, subject, email_date,
+                         email_body, attachments, auth_results, email_headers, structured_iocs):
+    """
+    Construye el resultado final del análisis
+    """
+    dt = datetime.now(timezone.utc)
+    millis = dt.microsecond // 1000
+    analysis_id = f"IOC-{dt.strftime('%Y%m%d-%H%M%S')}-{millis:03d}"
+
+    return {
+        "analysis_metadata": {
+            "analysis_id": analysis_id,
+            "analysis_timestamp": datetime.now(timezone.utc).isoformat(),
+            "file_analyzed": file_path,
+            "file_type": file_type
+        },
+        "email_metadata": {
+            "from": email_from,
+            "to": email_to,
+            "subject": subject,
+            "date": email_date,
+            "body_extracted": bool(email_body),
+            "body": email_body,
+            "attachments": attachments,
+            "authentication": {
+                "spf": auth_results["spf"],
+                "dkim": auth_results["dkim"],
+                "dmarc": auth_results["dmarc"]
+            }
+        },
+        "cabeceras_email": {
+            "return_path": email_headers["return_path"],
+            "reply_to": email_headers["reply_to"],
+            "x_originating_ip": email_headers["x_originating_ip"],
+            "x_mailer": email_headers["x_mailer"],
+            "received_chain": email_headers["received_chain"],
+            "authentication_results": email_headers["authentication_results"]
+        },
+        "findings": structured_iocs
+    }
+
+def find_iocs_safe(content):
+    """
+    Busca IOCs con manejo de errores mejorado
+    """
+    try:
+        return find_iocs(content)
+    except Exception as e:
+        logger.error(f"Error durante la búsqueda de IOCs: {str(e)}", exc_info=True)
+        return {
+            'domains': set(), 'email_addresses': set(), 'ipv4s': set(),
+            'ipv6s': set(), 'urls': set(), 'asns': set(), 'cidr_ranges': set(),
+            'md5s': set(), 'sha1s': set(), 'sha256s': set(), 'sha512s': set(),
+            'file_paths': set(), 'registry_key_paths': set(),
+            'mac_addresses': set(), 'user_agents': set()
+        }
+
 def extract_eml_attachments(msg):
     """
     Extrae archivos adjuntos de un mensaje EML y calcula sus hashes
@@ -500,512 +631,187 @@ def extract_eml_attachments(msg):
 def analyze_eml(eml_path):
     """
     Analiza un archivo EML y extrae IOCs
-    Con optimizaciones para rendimiento mejorado
     """
-    logger.info(f"Iniciando análisis del archivo EML: {eml_path}")
+    logger.info(f"Iniciando análisis de EML: {eml_path}")
     try:
-        # Verificar el tamaño del archivo
-        file_size = os.path.getsize(eml_path)
-        if file_size > MAX_FILE_SIZE:
-            logger.warning(f"Archivo EML demasiado grande: {file_size} bytes")
+        if os.path.getsize(eml_path) > MAX_FILE_SIZE:
             raise ValueError(f"El archivo excede el tamaño máximo permitido de {MAX_FILE_SIZE/1024/1024:.1f} MB")
-        
+
         with open(eml_path, 'rb') as f:
-            logger.debug("Leyendo el archivo EML...")
             msg = BytesParser(policy=policy.default).parse(f)
-            logger.debug("Archivo EML parseado correctamente")
-            
-            # Logging de información básica del correo
-            logger.info(f"Procesando correo con Subject: {msg.get('subject', 'No subject')}")
-            logger.debug(f"Content-Type del mensaje: {msg.get_content_type()}")
-            logger.debug(f"Charset del mensaje: {msg.get_content_charset()}")
+
+        logger.info(f"Procesando: {msg.get('subject', 'No subject')}")
 
         # Extraer direcciones y dominios del destinatario
-        logger.debug("Extrayendo direcciones y dominios del destinatario")
-        recipient_addresses = set()
-        recipient_domains = set()
-        
+        recipient_addresses, recipient_domains = set(), set()
         for header in ['to', 'cc', 'bcc']:
             if msg[header]:
-                addresses = str(msg[header]).split(',')
-                for addr in addresses:
+                for addr in str(msg[header]).split(','):
                     addr = addr.strip().lower()
                     recipient_addresses.add(addr)
                     if '@' in addr:
-                        domain = addr.split('@')[1].strip('>')
-                        recipient_domains.add(domain)
-        
-        logger.debug(f"Direcciones del destinatario: {recipient_addresses}")
-        logger.debug(f"Dominios del destinatario: {recipient_domains}")
+                        recipient_domains.add(addr.split('@')[1].strip('>'))
 
-        # Extraer cabeceras para análisis
-        logger.debug("Extrayendo cabeceras para análisis")
-        header_content = []
-        for header in ['from', 'subject', 'received', 'x-originating-ip', 'authentication-results']:
-            if msg[header]:
-                header_content.append(str(msg[header]))
-        logger.debug(f"Contenido de cabeceras: {header_content}")
-
-        # Extraer cuerpo del correo electrónico
-        logger.debug("Extrayendo cuerpo del correo electrónico")
+        # Extraer datos del email
         email_body = extract_body(msg)
-        
         if not email_body:
-            logger.warning("No se pudo extraer el cuerpo del correo electrónico")
-        else:
-            logger.debug("Cuerpo del correo extraído exitosamente")
+            logger.warning("No se pudo extraer el cuerpo del correo")
 
-        # Obtener la fecha del correo usando la nueva función
         email_date = parse_email_date(msg)
-        logger.debug(f"Fecha del correo extraída: {email_date}")
-
-        # Parsear resultados de autenticación (SPF, DKIM, DMARC)
-        logger.debug("Parseando resultados de autenticación")
         auth_results = parse_authentication_results(msg)
-        logger.debug(f"Resultados de autenticación: {auth_results}")
-
-        # Extraer cabeceras adicionales del email
-        logger.debug("Extrayendo cabeceras adicionales del email")
         email_headers = extract_email_headers(msg)
-        logger.debug(f"Cabeceras extraídas: {email_headers}")
-
-        # Extraer adjuntos y calcular hashes
-        logger.debug("Extrayendo archivos adjuntos")
         attachments = extract_eml_attachments(msg)
         logger.debug(f"Se encontraron {len(attachments)} adjuntos")
 
-        # Preparar contenido adicional de cabeceras para análisis de IOCs
+        # Preparar contenido para análisis de IOCs
+        header_content = [str(msg[h]) for h in ['from', 'subject', 'received', 'x-originating-ip', 'authentication-results'] if msg[h]]
         additional_headers = []
-        if email_headers.get('return_path'):
-            additional_headers.append(f"Return-Path: {email_headers['return_path']}")
-        if email_headers.get('reply_to'):
-            additional_headers.append(f"Reply-To: {email_headers['reply_to']}")
-        if email_headers.get('x_originating_ip'):
-            additional_headers.append(f"X-Originating-IP: {email_headers['x_originating_ip']}")
-        if email_headers.get('x_mailer'):
-            additional_headers.append(f"X-Mailer: {email_headers['x_mailer']}")
+        for key, prefix in [('return_path', 'Return-Path'), ('reply_to', 'Reply-To'),
+                           ('x_originating_ip', 'X-Originating-IP'), ('x_mailer', 'X-Mailer'),
+                           ('authentication_results', 'Authentication-Results')]:
+            if email_headers.get(key):
+                additional_headers.append(f"{prefix}: {email_headers[key]}")
         if email_headers.get('received_chain'):
             additional_headers.extend(email_headers['received_chain'])
-        if email_headers.get('authentication_results'):
-            additional_headers.append(f"Authentication-Results: {email_headers['authentication_results']}")
 
-        # Combinar todo el contenido para análisis (incluye cabeceras adicionales)
         full_content = "\n".join(header_content + additional_headers + [email_body])
-        logger.debug("Contenido completo preparado para análisis de IOCs")
+        analyzed_content = full_content[:MAX_CONTENT_ANALYSIS_SIZE] if len(full_content) > MAX_CONTENT_ANALYSIS_SIZE else full_content
 
-        # Limitar el tamaño del contenido a analizar para evitar timeouts
-        if len(full_content) > MAX_CONTENT_ANALYSIS_SIZE:
-            logger.warning(f"Contenido para análisis demasiado grande ({len(full_content)} bytes), limitando a {MAX_CONTENT_ANALYSIS_SIZE} bytes")
-            analyzed_content = full_content[:MAX_CONTENT_ANALYSIS_SIZE]
-        else:
-            analyzed_content = full_content
+        # Buscar IOCs y procesar
+        iocs = find_iocs_safe(analyzed_content)
+        iocs = process_iocs_with_attachments(iocs, attachments)
+        filtered_emails, filtered_domains = filter_recipient_iocs(iocs, recipient_addresses, recipient_domains)
+        structured_iocs = structure_iocs(iocs, filtered_emails, filtered_domains)
 
-        # Encontrar IOCs con manejo de excepciones mejorado
-        logger.debug("Buscando Indicadores de Compromiso (IOCs)")
-        try:
-            iocs = find_iocs(analyzed_content)
-            logger.debug(f"IOCs encontrados: {iocs}")
-        except Exception as e:
-            logger.error(f"Error durante la búsqueda de IOCs: {str(e)}", exc_info=True)
-            # Proporcionar un conjunto vacío de IOCs para continuar
-            iocs = {
-                'domains': set(),
-                'email_addresses': set(),
-                'ipv4s': set(),
-                'ipv6s': set(),
-                'urls': set(),
-                'asns': set(),
-                'cidr_ranges': set(),
-                'md5s': set(),
-                'sha1s': set(),
-                'sha256s': set(),
-                'sha512s': set(),
-                'file_paths': set(),
-                'registry_key_paths': set(),
-                'mac_addresses': set(),
-                'user_agents': set()
-            }
-            logger.warning("Usando conjunto vacío de IOCs debido a error en procesamiento")
-        
-        # Agregar hashes de los adjuntos a los IOCs encontrados
-        attachment_md5s = set(iocs.get('md5s', set()))
-        attachment_sha1s = set(iocs.get('sha1s', set()))
-        attachment_sha256s = set(iocs.get('sha256s', set()))
-        
-        for attachment in attachments:
-            if 'hashes' in attachment and isinstance(attachment['hashes'], dict) and 'info' not in attachment['hashes']:
-                if 'md5' in attachment['hashes']:
-                    attachment_md5s.add(attachment['hashes']['md5'])
-                if 'sha1' in attachment['hashes']:
-                    attachment_sha1s.add(attachment['hashes']['sha1'])
-                if 'sha256' in attachment['hashes']:
-                    attachment_sha256s.add(attachment['hashes']['sha256'])
-                    
-        # Actualizar IOCs con los hashes de los adjuntos
-        iocs['md5s'] = attachment_md5s
-        iocs['sha1s'] = attachment_sha1s
-        iocs['sha256s'] = attachment_sha256s
+        # Construir resultado
+        analysis_result = build_analysis_result(
+            eml_path, "eml",
+            str(msg.get("from", "")),
+            str(msg.get("to", "")),
+            str(msg.get("subject", "")),
+            email_date, email_body, attachments,
+            auth_results, email_headers, structured_iocs
+        )
 
-        # Filtrar direcciones y dominios del destinatario
-        logger.debug("Filtrando direcciones y dominios del destinatario")
-        filtered_emails = set(addr for addr in iocs.get('email_addresses', set()) 
-                            if addr.lower() not in recipient_addresses)
-        filtered_domains = set(domain for domain in iocs.get('domains', set()) 
-                             if domain.lower() not in recipient_domains)
-
-        structured_iocs = {
-            "network_indicators": {
-                "domains": list(filtered_domains),
-                "ipv4": list(iocs.get('ipv4s', set())),
-                "ipv6": list(iocs.get('ipv6s', set())),
-                "urls": list(iocs.get('urls', set())),
-                "email_addresses": list(filtered_emails),
-                "asns": list(iocs.get('asns', set())),
-                "cidr_ranges": list(iocs.get('cidr_ranges', set()))
-            },
-            "file_indicators": {
-                "md5_hashes": list(iocs.get('md5s', set())),
-                "sha1_hashes": list(iocs.get('sha1s', set())),
-                "sha256_hashes": list(iocs.get('sha256s', set())),
-                "sha512_hashes": list(iocs.get('sha512s', set())),
-                "file_paths": list(iocs.get('file_paths', set()))
-            },
-            "system_indicators": {
-                "registry_keys": list(iocs.get('registry_key_paths', set())),
-                "mac_addresses": list(iocs.get('mac_addresses', set())),
-                "user_agents": list(iocs.get('user_agents', set()))
-            }
-        }
-        
-        # Generar ID único para el análisis
-        dt = datetime.now(timezone.utc)
-        millis = dt.microsecond // 1000
-        analysis_id = f"IOC-{dt.strftime('%Y%m%d-%H%M%S')}-{millis:03d}"
-        
-        analysis_result = {
-            "analysis_metadata": {
-                "analysis_id": analysis_id,
-                "analysis_timestamp": datetime.now(timezone.utc).isoformat(),
-                "file_analyzed": eml_path,
-                "file_type": "eml"
-            },
-            "email_metadata": {
-                "from": str(msg.get("from", "")),
-                "to": str(msg.get("to", "")),
-                "subject": str(msg.get("subject", "")),
-                "date": email_date,
-                "body_extracted": bool(email_body),
-                "body": email_body,
-                "attachments": attachments,
-                "authentication": {
-                    "spf": auth_results["spf"],
-                    "dkim": auth_results["dkim"],
-                    "dmarc": auth_results["dmarc"]
-                }
-            },
-            "cabeceras_email": {
-                "return_path": email_headers["return_path"],
-                "reply_to": email_headers["reply_to"],
-                "x_originating_ip": email_headers["x_originating_ip"],
-                "x_mailer": email_headers["x_mailer"],
-                "received_chain": email_headers["received_chain"],
-                "authentication_results": email_headers["authentication_results"]
-            },
-            "findings": structured_iocs
-        }
-        
         logger.info("Análisis completado con éxito")
         return analysis_result
-        
+
     except Exception as e:
         logger.error(f"Error al analizar el archivo EML: {str(e)}", exc_info=True)
         raise
 
+def extract_msg_attachments(msg):
+    """
+    Extrae archivos adjuntos de un mensaje MSG y calcula sus hashes
+    """
+    attachments_info = []
+    for attachment in msg.attachments:
+        try:
+            if hasattr(attachment, 'longFilename') and attachment.longFilename and hasattr(attachment, 'data') and attachment.data:
+                attachment_size = len(attachment.data)
+                attachment_info = {"filename": attachment.longFilename, "size": attachment_size}
+
+                if attachment_size <= MAX_ATTACHMENT_SIZE:
+                    attachment_info["hashes"] = calculate_file_hashes(attachment.data)
+                else:
+                    logger.warning(f"Adjunto muy grande para hashes: {attachment.longFilename}")
+                    attachment_info["hashes"] = {"info": "Adjunto demasiado grande para calcular hashes"}
+
+                attachments_info.append(attachment_info)
+        except Exception as e:
+            logger.error(f"Error procesando adjunto MSG: {str(e)}", exc_info=True)
+    return attachments_info
+
+def parse_msg_authentication(msg):
+    """
+    Parsea resultados de autenticación desde cabeceras MSG
+    """
+    auth_results = {"spf": "NOT_FOUND", "dkim": "NOT_FOUND", "dmarc": "NOT_FOUND"}
+    try:
+        if hasattr(msg, 'header') and msg.header:
+            header_text = str(msg.header).lower()
+            for key, pattern in [('spf', r'spf\s*=\s*(pass|fail|neutral|softfail|none|temperror|permerror)'),
+                                ('dkim', r'dkim\s*=\s*(pass|fail|none|neutral|policy|temperror|permerror)'),
+                                ('dmarc', r'dmarc\s*=\s*(pass|fail|none|temperror|permerror)')]:
+                match = re.search(pattern, header_text)
+                if match:
+                    auth_results[key] = match.group(1).upper()
+    except Exception as e:
+        logger.warning(f"Error parseando autenticación MSG: {str(e)}")
+    return auth_results
+
 def analyze_msg(msg_path):
     """
     Analiza un archivo MSG (Outlook) y extrae IOCs
-    Con optimizaciones para rendimiento mejorado
     """
-    logger.info(f"Iniciando análisis del archivo MSG: {msg_path}")
+    logger.info(f"Iniciando análisis de MSG: {msg_path}")
     msg = None
     try:
-        # Verificar el tamaño del archivo
-        file_size = os.path.getsize(msg_path)
-        if file_size > MAX_FILE_SIZE:
-            logger.warning(f"Archivo MSG demasiado grande: {file_size} bytes")
+        if os.path.getsize(msg_path) > MAX_FILE_SIZE:
             raise ValueError(f"El archivo excede el tamaño máximo permitido de {MAX_FILE_SIZE/1024/1024:.1f} MB")
 
-        # Usar extract_msg para abrir el archivo MSG
-        logger.debug("Leyendo el archivo MSG...")
         msg = extract_msg.openMsg(msg_path)
-        logger.debug("Archivo MSG abierto correctamente")
-        
-        # Logging de información básica del correo
-        logger.info(f"Procesando correo con Subject: {msg.subject}")
-        
+        logger.info(f"Procesando: {msg.subject}")
+
         # Extraer direcciones y dominios del destinatario
-        logger.debug("Extrayendo direcciones y dominios del destinatario")
-        recipient_addresses = set()
-        recipient_domains = set()
-        
-        # Procesar destinatarios (to, cc y bcc)
+        recipient_addresses, recipient_domains = set(), set()
         for recipient in msg.recipients:
             if hasattr(recipient, 'email') and recipient.email:
                 addr = recipient.email.lower()
                 recipient_addresses.add(addr)
                 if '@' in addr:
-                    domain = addr.split('@')[1]
-                    recipient_domains.add(domain)
-        
-        logger.debug(f"Direcciones del destinatario: {recipient_addresses}")
-        logger.debug(f"Dominios del destinatario: {recipient_domains}")
-        
-        # Extraer cabeceras para análisis
-        logger.debug("Extrayendo datos de cabecera para análisis")
+                    recipient_domains.add(addr.split('@')[1])
+
+        # Extraer datos del email
+        email_body = msg.body
+        if email_body and len(email_body) > MAX_CONTENT_ANALYSIS_SIZE:
+            logger.warning(f"Cuerpo MSG muy grande, limitando tamaño")
+            email_body = email_body[:MAX_CONTENT_ANALYSIS_SIZE]
+        if not email_body:
+            logger.warning("No se pudo extraer el cuerpo del correo")
+
+        # Obtener fecha
+        email_date = msg.date.isoformat() if hasattr(msg.date, 'isoformat') else str(msg.date) if msg.date else datetime.now(timezone.utc).isoformat()
+
+        msg_headers = extract_msg_headers(msg)
+        auth_results = parse_msg_authentication(msg)
+        attachments_info = extract_msg_attachments(msg)
+        logger.debug(f"Se encontraron {len(attachments_info)} adjuntos")
+
+        # Preparar contenido para análisis de IOCs
         header_content = []
-        
-        # Añadir información del remitente
         if msg.sender:
             header_content.append(f"From: {msg.sender}")
-        
-        # Añadir asunto
         if msg.subject:
             header_content.append(f"Subject: {msg.subject}")
-        
-        # Extraer cuerpo del correo electrónico
-        logger.debug("Extrayendo cuerpo del correo electrónico")
-        email_body = msg.body
-        
-        # Limitar tamaño del cuerpo para evitar problemas de rendimiento
-        if email_body and len(email_body) > MAX_CONTENT_ANALYSIS_SIZE:
-            logger.warning(f"Cuerpo del correo MSG demasiado grande ({len(email_body)} bytes), limitando a {MAX_CONTENT_ANALYSIS_SIZE} bytes")
-            email_body = email_body[:MAX_CONTENT_ANALYSIS_SIZE]
-        
-        if not email_body:
-            logger.warning("No se pudo extraer el cuerpo del correo electrónico")
-        else:
-            logger.debug("Cuerpo del correo extraído exitosamente")
-        
-        # Obtener la fecha del correo
-        if msg.date:
-            # Verificar si msg.date ya es un string o un objeto datetime
-            if isinstance(msg.date, str):
-                email_date = msg.date
-            else:
-                try:
-                    email_date = msg.date.isoformat()
-                except AttributeError:
-                    # Si no tiene isoformat, intentar convertir a string
-                    email_date = str(msg.date)
-        else:
-            email_date = datetime.now(timezone.utc).isoformat()
-        logger.debug(f"Fecha del correo extraída: {email_date}")
 
-        # Extraer cabeceras adicionales del MSG
-        logger.debug("Extrayendo cabeceras adicionales del MSG")
-        msg_headers = extract_msg_headers(msg)
-        logger.debug(f"Cabeceras MSG extraídas: {msg_headers}")
-
-        # Parsear resultados de autenticación (SPF, DKIM, DMARC) desde las cabeceras del MSG
-        logger.debug("Parseando resultados de autenticación para MSG")
-        auth_results = {"spf": "NOT_FOUND", "dkim": "NOT_FOUND", "dmarc": "NOT_FOUND"}
-        try:
-            # Intentar obtener las cabeceras de transporte si están disponibles
-            if hasattr(msg, 'header') and msg.header:
-                # Buscar en las cabeceras del mensaje
-                header_text = str(msg.header)
-                auth_results_lower = header_text.lower()
-
-                # Extraer resultado SPF
-                spf_match = re.search(r'spf\s*=\s*(pass|fail|neutral|softfail|none|temperror|permerror)', auth_results_lower)
-                if spf_match:
-                    auth_results["spf"] = spf_match.group(1).upper()
-
-                # Extraer resultado DKIM
-                dkim_match = re.search(r'dkim\s*=\s*(pass|fail|none|neutral|policy|temperror|permerror)', auth_results_lower)
-                if dkim_match:
-                    auth_results["dkim"] = dkim_match.group(1).upper()
-
-                # Extraer resultado DMARC
-                dmarc_match = re.search(r'dmarc\s*=\s*(pass|fail|none|temperror|permerror)', auth_results_lower)
-                if dmarc_match:
-                    auth_results["dmarc"] = dmarc_match.group(1).upper()
-
-                logger.debug(f"Resultados de autenticación MSG: {auth_results}")
-        except Exception as e:
-            logger.warning(f"No se pudieron parsear los resultados de autenticación del MSG: {str(e)}")
-
-        # Procesar adjuntos y calcular hashes
-        logger.debug("Procesando adjuntos del correo MSG")
-        attachments_info = []
-        
-        for attachment in msg.attachments:
-            try:
-                if hasattr(attachment, 'longFilename') and attachment.longFilename:
-                    attachment_data = attachment.data if hasattr(attachment, 'data') else None
-                    
-                    if attachment_data:
-                        attachment_size = len(attachment_data)
-                        
-                        attachment_info = {
-                            "filename": attachment.longFilename,
-                            "size": attachment_size
-                        }
-                        
-                        # Solo calcular hashes para adjuntos pequeños
-                        if attachment_size <= MAX_ATTACHMENT_SIZE:
-                            hashes = calculate_file_hashes(attachment_data)
-                            attachment_info["hashes"] = hashes
-                        else:
-                            logger.warning(f"Adjunto demasiado grande para calcular hashes: {attachment.longFilename}, tamaño: {attachment_size} bytes")
-                            attachment_info["hashes"] = {
-                                "info": "Adjunto demasiado grande para calcular hashes"
-                            }
-                        
-                        attachments_info.append(attachment_info)
-                        logger.debug(f"Adjunto procesado: {attachment.longFilename}, tamaño: {attachment_size} bytes")
-            except Exception as e:
-                logger.error(f"Error al procesar adjunto {getattr(attachment, 'longFilename', 'desconocido')}: {str(e)}", exc_info=True)
-
-        # Preparar contenido adicional de cabeceras para análisis de IOCs
         additional_headers = []
-        if msg_headers.get('return_path'):
-            additional_headers.append(f"Return-Path: {msg_headers['return_path']}")
-        if msg_headers.get('reply_to'):
-            additional_headers.append(f"Reply-To: {msg_headers['reply_to']}")
-        if msg_headers.get('x_originating_ip'):
-            additional_headers.append(f"X-Originating-IP: {msg_headers['x_originating_ip']}")
-        if msg_headers.get('x_mailer'):
-            additional_headers.append(f"X-Mailer: {msg_headers['x_mailer']}")
+        for key, prefix in [('return_path', 'Return-Path'), ('reply_to', 'Reply-To'),
+                           ('x_originating_ip', 'X-Originating-IP'), ('x_mailer', 'X-Mailer'),
+                           ('authentication_results', 'Authentication-Results')]:
+            if msg_headers.get(key):
+                additional_headers.append(f"{prefix}: {msg_headers[key]}")
         if msg_headers.get('received_chain'):
             additional_headers.extend(msg_headers['received_chain'])
-        if msg_headers.get('authentication_results'):
-            additional_headers.append(f"Authentication-Results: {msg_headers['authentication_results']}")
 
-        # Combinar todo el contenido para análisis (incluye cabeceras adicionales)
-        full_content = "\n".join(header_content + additional_headers + [email_body]) if email_body else "\n".join(header_content + additional_headers)
-        logger.debug("Contenido completo preparado para análisis de IOCs")
-        
-        # Limitar el tamaño del contenido a analizar para evitar timeouts
-        if len(full_content) > MAX_CONTENT_ANALYSIS_SIZE:
-            logger.warning(f"Contenido para análisis demasiado grande ({len(full_content)} bytes), limitando a {MAX_CONTENT_ANALYSIS_SIZE} bytes")
-            analyzed_content = full_content[:MAX_CONTENT_ANALYSIS_SIZE]
-        else:
-            analyzed_content = full_content
-        
-        # Encontrar IOCs con manejo de excepciones mejorado
-        logger.debug("Buscando Indicadores de Compromiso (IOCs)")
-        try:
-            iocs = find_iocs(analyzed_content)
-            logger.debug(f"IOCs encontrados: {iocs}")
-        except Exception as e:
-            logger.error(f"Error durante la búsqueda de IOCs: {str(e)}", exc_info=True)
-            # Proporcionar un conjunto vacío de IOCs para continuar
-            iocs = {
-                'domains': set(),
-                'email_addresses': set(),
-                'ipv4s': set(),
-                'ipv6s': set(),
-                'urls': set(),
-                'asns': set(),
-                'cidr_ranges': set(),
-                'md5s': set(),
-                'sha1s': set(),
-                'sha256s': set(),
-                'sha512s': set(),
-                'file_paths': set(),
-                'registry_key_paths': set(),
-                'mac_addresses': set(),
-                'user_agents': set()
-            }
-            logger.warning("Usando conjunto vacío de IOCs debido a error en procesamiento")
-        
-        # Agregar hashes de los adjuntos a los IOCs encontrados
-        attachment_md5s = set(iocs.get('md5s', set()))
-        attachment_sha1s = set(iocs.get('sha1s', set()))
-        attachment_sha256s = set(iocs.get('sha256s', set()))
-        
-        for attachment in attachments_info:
-            if 'hashes' in attachment and isinstance(attachment['hashes'], dict) and 'info' not in attachment['hashes']:
-                if 'md5' in attachment['hashes']:
-                    attachment_md5s.add(attachment['hashes']['md5'])
-                if 'sha1' in attachment['hashes']:
-                    attachment_sha1s.add(attachment['hashes']['sha1'])
-                if 'sha256' in attachment['hashes']:
-                    attachment_sha256s.add(attachment['hashes']['sha256'])
-                    
-        # Actualizar IOCs con los hashes de los adjuntos
-        iocs['md5s'] = attachment_md5s
-        iocs['sha1s'] = attachment_sha1s
-        iocs['sha256s'] = attachment_sha256s
-        
-        # Filtrar direcciones y dominios del destinatario
-        logger.debug("Filtrando direcciones y dominios del destinatario")
-        filtered_emails = set(addr for addr in iocs.get('email_addresses', set()) 
-                            if addr.lower() not in recipient_addresses)
-        filtered_domains = set(domain for domain in iocs.get('domains', set()) 
-                             if domain.lower() not in recipient_domains)
-        
-        structured_iocs = {
-            "network_indicators": {
-                "domains": list(filtered_domains),
-                "ipv4": list(iocs.get('ipv4s', set())),
-                "ipv6": list(iocs.get('ipv6s', set())),
-                "urls": list(iocs.get('urls', set())),
-                "email_addresses": list(filtered_emails),
-                "asns": list(iocs.get('asns', set())),
-                "cidr_ranges": list(iocs.get('cidr_ranges', set()))
-            },
-            "file_indicators": {
-                "md5_hashes": list(iocs.get('md5s', set())),
-                "sha1_hashes": list(iocs.get('sha1s', set())),
-                "sha256_hashes": list(iocs.get('sha256s', set())),
-                "sha512_hashes": list(iocs.get('sha512s', set())),
-                "file_paths": list(iocs.get('file_paths', set()))
-            },
-            "system_indicators": {
-                "registry_keys": list(iocs.get('registry_key_paths', set())),
-                "mac_addresses": list(iocs.get('mac_addresses', set())),
-                "user_agents": list(iocs.get('user_agents', set()))
-            }
-        }
-        
-        # Generar ID único para el análisis
-        dt = datetime.now(timezone.utc)
-        millis = dt.microsecond // 1000
-        analysis_id = f"IOC-{dt.strftime('%Y%m%d-%H%M%S')}-{millis:03d}"
-        
-        analysis_result = {
-            "analysis_metadata": {
-                "analysis_id": analysis_id,
-                "analysis_timestamp": datetime.now(timezone.utc).isoformat(),
-                "file_analyzed": msg_path,
-                "file_type": "msg"
-            },
-            "email_metadata": {
-                "from": msg.sender if msg.sender else "",
-                "to": "; ".join([r.email for r in msg.recipients if hasattr(r, 'email') and r.email]),
-                "subject": msg.subject if msg.subject else "",
-                "date": email_date,
-                "body_extracted": bool(email_body),
-                "body": email_body,
-                "attachments": attachments_info,
-                "authentication": {
-                    "spf": auth_results["spf"],
-                    "dkim": auth_results["dkim"],
-                    "dmarc": auth_results["dmarc"]
-                }
-            },
-            "cabeceras_email": {
-                "return_path": msg_headers["return_path"],
-                "reply_to": msg_headers["reply_to"],
-                "x_originating_ip": msg_headers["x_originating_ip"],
-                "x_mailer": msg_headers["x_mailer"],
-                "received_chain": msg_headers["received_chain"],
-                "authentication_results": msg_headers["authentication_results"]
-            },
-            "findings": structured_iocs
-        }
+        full_content = "\n".join(header_content + additional_headers + ([email_body] if email_body else []))
+        analyzed_content = full_content[:MAX_CONTENT_ANALYSIS_SIZE] if len(full_content) > MAX_CONTENT_ANALYSIS_SIZE else full_content
+
+        # Buscar IOCs y procesar
+        iocs = find_iocs_safe(analyzed_content)
+        iocs = process_iocs_with_attachments(iocs, attachments_info)
+        filtered_emails, filtered_domains = filter_recipient_iocs(iocs, recipient_addresses, recipient_domains)
+        structured_iocs = structure_iocs(iocs, filtered_emails, filtered_domains)
+
+        # Construir resultado
+        analysis_result = build_analysis_result(
+            msg_path, "msg",
+            msg.sender if msg.sender else "",
+            "; ".join([r.email for r in msg.recipients if hasattr(r, 'email') and r.email]),
+            msg.subject if msg.subject else "",
+            email_date, email_body, attachments_info,
+            auth_results, msg_headers, structured_iocs
+        )
 
         logger.info("Análisis completado con éxito")
         return analysis_result
@@ -1014,13 +820,11 @@ def analyze_msg(msg_path):
         logger.error(f"Error al analizar el archivo MSG: {str(e)}", exc_info=True)
         raise
     finally:
-        # Cerrar el objeto MSG para liberar el archivo
         if msg is not None:
             try:
                 msg.close()
-                logger.debug("Objeto MSG cerrado correctamente")
             except Exception as e:
-                logger.warning(f"Error al cerrar el objeto MSG: {str(e)}")
+                logger.warning(f"Error al cerrar MSG: {str(e)}")
 
 @app.route('/api/v1/analyze_email', methods=['POST'])
 @require_api_key
@@ -1197,270 +1001,64 @@ def analyze_email_file():
             error=str(e)
         )), 500
 
+def process_email_file(expected_extension, field_name, analysis_function):
+    """
+    Función auxiliar para procesar archivos de email (EML o MSG)
+    """
+    file = request.files.get(field_name)
+    if not file:
+        # Buscar en campos alternativos
+        for field in request.files:
+            if request.files[field].filename.lower().endswith(f'.{expected_extension}'):
+                file = request.files[field]
+                break
+
+    if not file or file.filename == '':
+        return json_response(create_json_response(
+            status="error",
+            error=f"No {expected_extension.upper()} file uploaded"
+        )), 400
+
+    # Verificar tamaño
+    size_ok, file_size, error_message = check_file_size(file, MAX_FILE_SIZE)
+    if not size_ok:
+        return json_response(create_json_response(status="error", error=error_message)), 413
+
+    # Guardar y analizar
+    with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{expected_extension}') as temp_file:
+        file.save(temp_file.name)
+        temp_filename = temp_file.name
+
+    try:
+        results = analysis_function(temp_filename)
+        return json_response(create_json_response(status="success", data=results), 200)
+    except ValueError as ve:
+        return json_response(create_json_response(status="error", error=str(ve)), 413)
+    except Exception as e:
+        logger.error(f"Error analyzing {expected_extension.upper()}: {str(e)}", exc_info=True)
+        return json_response(create_json_response(status="error", error=str(e)), 500)
+    finally:
+        if os.path.exists(temp_filename):
+            os.remove(temp_filename)
+
 # Mantener los endpoints originales por compatibilidad
 @app.route('/api/v1/analyze_eml', methods=['POST'])
 @require_api_key
 def analyze_eml_file():
     """
-    Endpoint para analizar archivos EML
+    Endpoint para analizar archivos EML (legacy, usa process_email_file)
     """
     logger.info("Recibida solicitud de análisis de EML")
-    try:
-        if 'eml_file' not in request.files:
-            # Intentar buscar el archivo en otros campos comunes
-            file = None
-            for field in request.files:
-                if request.files[field].filename.lower().endswith('.eml'):
-                    file = request.files[field]
-                    logger.debug(f"Archivo EML encontrado en campo alternativo: {field}")
-                    break
-            
-            if not file:
-                logger.warning("No se ha subido ningún archivo EML")
-                return json_response(create_json_response(
-                    status="error",
-                    error="No EML file uploaded"
-                )), 400
-        else:
-            file = request.files['eml_file']
-            
-        logger.debug(f"Nombre del archivo recibido: {file.filename}")
-        
-        if file.filename == '':
-            logger.warning("No se ha seleccionado ningún archivo")
-            return json_response(create_json_response(
-                status="error",
-                error="No file selected"
-            )), 400
-        
-        # Verificar el tamaño del archivo
-        size_ok, file_size = check_file_size(file, MAX_FILE_SIZE)
-        if not size_ok:
-            logger.warning(f"El archivo excede el tamaño máximo: {file_size} bytes")
-            return json_response(create_json_response(
-                status="error",
-                error=f"El archivo excede el tamaño máximo permitido de {MAX_FILE_SIZE/1024/1024:.1f} MB (tamaño actual: {file_size/1024/1024:.2f} MB)"
-            )), 413
-            
-        # Verificar si el archivo tiene extensión EML o si podemos detectar que es un EML
-        if not file.filename.lower().endswith('.eml'):
-            # Intentar determinar si es un archivo EML por su contenido
-            with tempfile.NamedTemporaryFile(delete=False) as temp_check:
-                file.save(temp_check.name)
-                temp_check_filename = temp_check.name
-                
-            try:
-                with open(temp_check_filename, 'rb') as f:
-                    try:
-                        BytesParser(policy=policy.default).parse(f)
-                        logger.debug("Archivo detectado como EML por su contenido a pesar de no tener extensión .eml")
-                        
-                    except Exception as e:
-                        logger.warning("El archivo no es un archivo EML válido")
-                        
-                        # Eliminar archivo temporal de verificación
-                        if os.path.exists(temp_check_filename):
-                            os.remove(temp_check_filename)
-                            
-                        return json_response(create_json_response(
-                            status="error",
-                            error="File must be an EML file"
-                        
-                        )), 400
-                        
-            except Exception as e:
-                logger.warning(f"Error al verificar el contenido del archivo: {str(e)}")
-                
-                # Eliminar archivo temporal de verificación
-                if os.path.exists(temp_check_filename):
-                    os.remove(temp_check_filename)
-                    
-                return json_response(create_json_response(
-                    status="error",
-                    error="File must be an EML file"
-                
-                )), 400
-                
-            # Eliminar archivo temporal de verificación
-            if os.path.exists(temp_check_filename):
-                os.remove(temp_check_filename)
-                
-            # Volver a mover el puntero al inicio del archivo para poder guardarlo de nuevo
-            file.seek(0)
-            
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.eml') as temp_file:
-            logger.debug(f"Guardando archivo temporal en: {temp_file.name}")
-            file.save(temp_file.name)
-            temp_filename = temp_file.name
-            
-        try:
-            logger.debug(f"Iniciando análisis del archivo temporal: {temp_filename}")
-            results = analyze_eml(temp_filename)
-            logger.info("Análisis exitoso, preparando respuesta")
-            response = create_json_response(
-                status="success",
-                data=results
-            )
-            return json_response(response, 200)
-            
-        except ValueError as ve:
-            # Manejar específicamente errores de valor (como tamaño excesivo)
-            logger.warning(f"Error de validación: {str(ve)}")
-            return json_response(create_json_response(
-                status="error",
-                error=str(ve)
-            )), 413
-            
-        except Exception as e:
-            logger.error(f"Error al analizar el archivo EML: {str(e)}", exc_info=True)
-            return json_response(create_json_response(
-                status="error",
-                error=str(e)
-            )), 500
-            
-        finally:
-            if os.path.exists(temp_filename):
-                logger.debug(f"Eliminando archivo temporal: {temp_filename}")
-                os.remove(temp_filename)
-                
-    except Exception as e:
-        logger.error(f"Error al procesar el archivo EML: {str(e)}", exc_info=True)
-        return json_response(create_json_response(
-            status="error",
-            error=str(e)
-        )), 500
+    return process_email_file('eml', 'eml_file', analyze_eml)
 
 @app.route('/api/v1/analyze_msg', methods=['POST'])
 @require_api_key
 def analyze_msg_file():
     """
-    Endpoint para analizar archivos MSG
+    Endpoint para analizar archivos MSG (legacy, usa process_email_file)
     """
     logger.info("Recibida solicitud de análisis de MSG")
-    try:
-        if 'msg_file' not in request.files:
-            # Intentar buscar el archivo en otros campos comunes
-            file = None
-            for field in request.files:
-                if request.files[field].filename.lower().endswith('.msg'):
-                    file = request.files[field]
-                    logger.debug(f"Archivo MSG encontrado en campo alternativo: {field}")
-                    break
-            
-            if not file:
-                logger.warning("No se ha subido ningún archivo MSG")
-                return json_response(create_json_response(
-                    status="error",
-                    error="No MSG file uploaded"
-                )), 400
-        else:
-            file = request.files['msg_file']
-            
-        logger.debug(f"Nombre del archivo recibido: {file.filename}")
-        
-        if file.filename == '':
-            logger.warning("No se ha seleccionado ningún archivo")
-            return json_response(create_json_response(
-                status="error",
-                error="No file selected"
-            )), 400
-        
-        # Verificar el tamaño del archivo
-        size_ok, file_size = check_file_size(file, MAX_FILE_SIZE)
-        if not size_ok:
-            logger.warning(f"El archivo excede el tamaño máximo: {file_size} bytes")
-            return json_response(create_json_response(
-                status="error",
-                error=f"El archivo excede el tamaño máximo permitido de {MAX_FILE_SIZE/1024/1024:.1f} MB (tamaño actual: {file_size/1024/1024:.2f} MB)"
-            )), 413
-            
-        # Verificar si el archivo tiene extensión MSG o si podemos detectar que es un MSG
-        if not file.filename.lower().endswith('.msg'):
-            # Intentar determinar si es un archivo MSG por su contenido
-            with tempfile.NamedTemporaryFile(delete=False) as temp_check:
-                file.save(temp_check.name)
-                temp_check_filename = temp_check.name
-                
-            try:
-                try:
-                    test_msg = extract_msg.openMsg(temp_check_filename)
-                    test_msg.close()  # Cerrar inmediatamente después de verificar
-                    logger.debug("Archivo detectado como MSG por su contenido a pesar de no tener extensión .msg")
-
-                except Exception as e:
-                    logger.warning("El archivo no es un archivo MSG válido")
-                    
-                    # Eliminar archivo temporal de verificación
-                    if os.path.exists(temp_check_filename):
-                        os.remove(temp_check_filename)
-                        
-                    return json_response(create_json_response(
-                        status="error",
-                        error="File must be an MSG file"
-                    
-                    )), 400
-                    
-            except Exception as e:
-                logger.warning(f"Error al verificar el contenido del archivo: {str(e)}")
-                
-                # Eliminar archivo temporal de verificación
-                if os.path.exists(temp_check_filename):
-                    os.remove(temp_check_filename)
-                    
-                return json_response(create_json_response(
-                    status="error",
-                    error="File must be an MSG file"
-                
-                )), 400
-                
-            # Eliminar archivo temporal de verificación
-            if os.path.exists(temp_check_filename):
-                os.remove(temp_check_filename)
-                
-            # Volver a mover el puntero al inicio del archivo para poder guardarlo de nuevo
-            file.seek(0)
-            
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.msg') as temp_file:
-            logger.debug(f"Guardando archivo temporal en: {temp_file.name}")
-            file.save(temp_file.name)
-            temp_filename = temp_file.name
-            
-        try:
-            logger.debug(f"Iniciando análisis del archivo temporal: {temp_filename}")
-            results = analyze_msg(temp_filename)
-            logger.info("Análisis exitoso, preparando respuesta")
-            response = create_json_response(
-                status="success",
-                data=results
-            )
-            return json_response(response, 200)
-            
-        except ValueError as ve:
-            # Manejar específicamente errores de valor (como tamaño excesivo)
-            logger.warning(f"Error de validación: {str(ve)}")
-            return json_response(create_json_response(
-                status="error",
-                error=str(ve)
-            )), 413
-            
-        except Exception as e:
-            logger.error(f"Error al analizar el archivo MSG: {str(e)}", exc_info=True)
-            return json_response(create_json_response(
-                status="error",
-                error=str(e)
-            )), 500
-            
-        finally:
-            if os.path.exists(temp_filename):
-                logger.debug(f"Eliminando archivo temporal: {temp_filename}")
-                os.remove(temp_filename)
-                
-    except Exception as e:
-        logger.error(f"Error al procesar el archivo MSG: {str(e)}", exc_info=True)
-        return json_response(create_json_response(
-            status="error",
-            error=str(e)
-        )), 500
+    return process_email_file('msg', 'msg_file', analyze_msg)
 
 # Ruta para la página principal
 @app.route('/', methods=['GET'])
