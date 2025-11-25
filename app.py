@@ -31,12 +31,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Obtener la API Key de las variables de entorno
-  API_KEY = os.environ.get('PHISHPROTECT_API_KEY')  # Comentado para pruebas locales
-# API_KEY = "mi-api-key-de-prueba"   TODO: Cambiar por variable de entorno en producción
+# Obtener la API Key de las variables de entorno (con fallback para desarrollo)
+API_KEY = os.environ.get('PHISHPROTECT_API_KEY', 'mi-api-key-de-prueba')
 
-if not API_KEY:
-    logger.warning("PHISHPROTECT_API_KEY no está configurada en las variables de entorno")
+if API_KEY == 'mi-api-key-de-prueba':
+    logger.warning("Usando API Key de desarrollo. Configure PHISHPROTECT_API_KEY en producción.")
 
 # Obtener límites de tamaño de las variables de entorno
 MAX_FILE_SIZE_MB = int(os.environ.get('MAX_FILE_SIZE_MB', 18))
