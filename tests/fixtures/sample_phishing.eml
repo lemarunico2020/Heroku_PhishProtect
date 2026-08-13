@@ -1,0 +1,43 @@
+From: "Soporte Seguridad" <soporte@ejemplo-remitente-test.com>
+To: destinatario@empresa-cliente-test.com
+Subject: Actualizacion urgente de su cuenta - verificacion requerida
+Date: Wed, 12 Aug 2026 10:15:30 +0000
+Message-ID: <test-phishing-001@ejemplo-remitente-test.com>
+MIME-Version: 1.0
+Authentication-Results: mx.empresa-cliente-test.com; spf=fail smtp.mailfrom=ejemplo-remitente-test.com; dkim=fail header.d=ejemplo-remitente-test.com; dmarc=fail action=quarantine header.from=ejemplo-remitente-test.com
+Return-Path: <bounce@ejemplo-remitente-test.com>
+Reply-To: actor-malicioso-test@ejemplo-remitente-test.com
+X-Originating-IP: [203.0.113.10]
+X-Mailer: TestMailer 1.0
+Received: from mx1.ejemplo-remitente-test.com (mx1.ejemplo-remitente-test.com [203.0.113.10])
+ by mx.empresa-cliente-test.com with ESMTP id abc123
+ for <destinatario@empresa-cliente-test.com>; Wed, 12 Aug 2026 10:15:25 +0000
+Content-Type: multipart/mixed; boundary="BOUNDARY123456"
+
+This is a MIME-formatted message. If you see this text it means your email software does not support MIME formatted messages.
+
+--BOUNDARY123456
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Estimado usuario,
+
+Su cuenta ha sido comprometida. Por favor verifique su informacion en el siguiente enlace:
+http://ejemplo-dominio-malicioso-test.com/verificar-cuenta
+
+Tambien puede contactarnos en: actor-malicioso-test@ejemplo-remitente-test.com
+
+IP de referencia: 203.0.113.55
+Hash de verificacion (MD5): 5d41402abc4b2a76b9719d911017c592
+
+Atentamente,
+Equipo de Soporte (correo sintetico de prueba)
+
+--BOUNDARY123456
+Content-Type: text/plain; name="documento.txt"
+Content-Disposition: attachment; filename="documento.txt"
+Content-Transfer-Encoding: base64
+
+Q29udGVuaWRvIGRlIHBydWViYSBkZWwgYWRqdW50byBzaW50ZXRpY28gcGFyYSBIVS0wMS4K
+
+--BOUNDARY123456--

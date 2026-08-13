@@ -1,0 +1,5 @@
+-r requirements.txt
+pytest
+jsonschema
+bandit
+pip-audit

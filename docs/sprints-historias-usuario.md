@@ -164,6 +164,53 @@ grep -i "api_key\|X-API-Key" ioc_finder.log  # no debe haber coincidencias con e
 
 ---
 
+### HU-14: Actualizar dependencias con vulnerabilidades conocidas (pip-audit)
+
+**Como** responsable de seguridad del proyecto
+**Quiero** actualizar las dependencias de `requirements.txt` que tienen CVEs conocidos con versión corregida disponible
+**Para** cerrar vulnerabilidades heredadas antes de seguir construyendo funcionalidad sobre ellas.
+
+> Historia agregada durante la ejecución de HU-01: el primer `pip-audit -r requirements.txt` corrido como parte del DoD encontró 10 vulnerabilidades conocidas en 6 paquetes ya presentes en el proyecto (no introducidas por HU-01). Se registra como HU aparte en vez de mezclarla con HU-01, que solo debía agregar tests.
+
+**Hallazgos de referencia (pip-audit, fecha de detección: 2026-08-13):**
+
+| Paquete | Versión actual | Advisory | Versión con fix |
+|---|---|---|---|
+| Flask | 3.1.0 | PYSEC-2026-1377, PYSEC-2026-2151 | 3.1.3 |
+| Werkzeug | 3.1.3 | PYSEC-2026-2046, PYSEC-2026-2044, PYSEC-2026-2320 | 3.1.6 |
+| Jinja2 | 3.1.5 | PYSEC-2026-1471 | 3.1.6 |
+| click | 8.1.8 | PYSEC-2026-2132 | 8.3.3 |
+| idna | 3.10 | PYSEC-2026-215 | 3.15 |
+| d8s-lists | 0.8.0 | PYSEC-2022-43027 | *(sin fix publicado)* |
+
+**Criterios de aceptación:**
+- `pip-audit -r requirements.txt` no reporta vulnerabilidades con versión corregida disponible pendiente de aplicar.
+- Para `d8s-lists` (sin fix disponible): se documenta como riesgo aceptado en `README.md`/`status.md`, evaluando si sigue siendo necesaria como dependencia directa o transitiva (viene de `ioc-finder`) o si puede eliminarse/aislarse.
+- La suite de tests de contrato (HU-01) sigue en verde después de cada actualización de versión.
+- No se actualiza ninguna dependencia a una versión con *breaking changes* documentados sin revisar el changelog primero.
+
+**Tareas técnicas:**
+- Actualizar en `requirements.txt`: `Flask==3.1.3`, `Werkzeug==3.1.6`, `Jinja2==3.1.6`, `click==8.3.3`, `idna==3.15`.
+- Reinstalar el entorno virtual desde cero con las versiones nuevas y correr la suite completa de tests.
+- Investigar `d8s-lists` (de dónde viene la dependencia, si `ioc-finder` la requiere de forma directa o si hay una versión más reciente de `ioc-finder` que ya no dependa de un `d8s-lists` vulnerable).
+- Repetir `pip-audit` como verificación final.
+
+**Seguridad:**
+- Esta HU **es** en sí misma la remediación de seguridad; no requiere pasos adicionales más allá de correr `pip-audit`/`bandit` post-cambio y la suite de tests de contrato.
+- Revisar el *changelog* de Flask/Werkzeug entre versiones menores para descartar cambios de comportamiento que afecten el manejo de `request.files` o las respuestas JSON (bajo riesgo dado que son parches menores, pero se verifica igual).
+
+**Pruebas en entorno virtual:**
+```bash
+pip install -r requirements.txt --upgrade
+pytest -v
+bandit -r app.py
+pip-audit -r requirements.txt
+```
+
+**Estimación:** 3 puntos
+
+---
+
 ## Sprint 2 — Enriquecimiento local de IOCs
 
 **Objetivo:** sacar más valor de datos que ya se reciben, sin llamadas externas ni latencia relevante.
@@ -455,11 +502,13 @@ curl -X POST -F "email_file=@tests/fixtures/sample.eml" -H "X-API-Key: test-key"
 
 | Sprint | Enfoque | HU incluidas | Puntos estimados |
 |---|---|---|---|
-| Sprint 1 | Fundamentos + quick wins | HU-01 a HU-04 | 10 |
+| Sprint 1 | Fundamentos + quick wins | HU-01 a HU-04, HU-14 | 13 |
 | Sprint 2 | Enriquecimiento local de IOCs | HU-05, HU-06, (HU-07 stretch) | 8 (+5 stretch) |
 | Sprint 3 | Preparación IA/ML | HU-08 a HU-10 | 8 |
 | Sprint 4 | Rendimiento + Docker/EasyPanel | HU-11 a HU-13 | 12 |
-| **Total** | | **13 HU** | **~38-43 puntos** |
+| **Total** | | **14 HU** | **~41-46 puntos** |
+
+**Nota:** HU-14 se agregó fuera de secuencia numérica (después de detectarse en la ejecución de HU-01) pero pertenece funcionalmente al Sprint 1; ver [status.md](../status.md) para el orden real de ejecución.
 
 ## Backlog futuro (no incluido en estos sprints)
 

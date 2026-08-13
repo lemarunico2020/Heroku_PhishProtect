@@ -1,0 +1,24 @@
+# Entornos virtuales
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Logs de la aplicación
+ioc_finder.log
+*.log
+
+# Muestras de correo reales para pruebas manuales (nunca deben subirse al repo)
+samples/
+
+# Archivos de entorno local
+.env
+
+# Editores/IDE
+.vscode/
+.idea/

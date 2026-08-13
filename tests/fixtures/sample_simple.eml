@@ -1,0 +1,12 @@
+From: remitente-simple-test@ejemplo-dominio-test.com
+To: destinatario@empresa-cliente-test.com
+Subject: Correo simple de prueba sin adjuntos
+Date: Wed, 12 Aug 2026 09:00:00 +0000
+Message-ID: <test-simple-001@ejemplo-dominio-test.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Este es un correo de prueba simple, sin cabeceras de autenticacion,
+sin adjuntos y sin formato multipart. Sirve para validar el caso
+minimo del pipeline de analisis.
