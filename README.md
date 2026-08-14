@@ -162,6 +162,28 @@ Las rutas son configurables vía variables de entorno:
 | `ALLOWLIST_DOMAINS_PATH` | Ruta al archivo de dominios permitidos | `config/allowlist_domains.txt` |
 | `ALLOWLIST_EMAILS_PATH` | Ruta al archivo de correos permitidos | `config/allowlist_emails.txt` |
 
+## Configuración de gunicorn (producción)
+
+El comando de arranque en producción (`Procfile`) es configurable vía variables de entorno, sin tocar código:
+
+```
+web: gunicorn -w ${WEB_CONCURRENCY:-2} --threads ${GUNICORN_THREADS:-2} -k gthread --timeout ${GUNICORN_TIMEOUT:-60} app:app
+```
+
+| Variable | Descripción | Valor por defecto |
+|---|---|---|
+| `WEB_CONCURRENCY` | Número de workers (procesos) de gunicorn | `2` |
+| `GUNICORN_THREADS` | Threads por worker (worker tipo `gthread`) | `2` |
+| `GUNICORN_TIMEOUT` | Segundos antes de reciclar un worker con una request colgada | `60` |
+
+**Valores recomendados según CPU disponible:** cada worker es un proceso Python completo (memoria propia); cada thread comparte esa memoria. El análisis de EML/MSG es mayormente I/O-bound (lectura del archivo, parseo de MIME/HTML/PDF) con picos cortos de CPU (hashing, regex de IOCs), por lo que conviene priorizar threads sobre workers frente al clásico `2×núcleos+1` de gunicorn (pensado para un solo hilo por worker):
+
+- `WEB_CONCURRENCY` ≈ número de núcleos disponibles (ajustar a la baja si la memoria es el límite).
+- `GUNICORN_THREADS` entre 2 y 4.
+- `GUNICORN_TIMEOUT` en 60 (o más, si se esperan archivos grandes/lentos de analizar) — nunca `0` (deshabilita el timeout y permite que una request colgada bloquee un worker indefinidamente).
+
+El `--timeout` explícito es en sí mismo una mitigación de disponibilidad: sin él, una solicitud diseñada para colgarse (o un archivo anómalamente lento de parsear) podría agotar todos los workers. Si se despliega detrás de un proxy (EasyPanel, un load balancer, etc.) que imponga su propio límite de tamaño de body, confirmar que sea igual o menor a `MAX_FILE_SIZE_MB` para que una solicitud excesivamente grande se rechace antes de llegar a gunicorn.
+
 ## Seguridad
 
 Este servicio está diseñado para análisis de seguridad. Ten en cuenta:
