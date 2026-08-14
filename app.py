@@ -50,6 +50,39 @@ MAX_ATTACHMENT_SIZE = MAX_ATTACHMENT_SIZE_MB * 1024 * 1024
 
 logger.info(f"Límites configurados: Archivo máx: {MAX_FILE_SIZE_MB}MB, Contenido máx: {MAX_CONTENT_SIZE_MB}MB, Adjunto máx: {MAX_ATTACHMENT_SIZE_MB}MB")
 
+# Rutas de la allowlist configurable de dominios y correos de confianza.
+# Rutas fijas de configuracion del servidor (nunca tomadas de la request),
+# para evitar path traversal si en el futuro se parametrizan desde la API.
+ALLOWLIST_DOMAINS_PATH = os.environ.get('ALLOWLIST_DOMAINS_PATH', os.path.join('config', 'allowlist_domains.txt'))
+ALLOWLIST_EMAILS_PATH = os.environ.get('ALLOWLIST_EMAILS_PATH', os.path.join('config', 'allowlist_emails.txt'))
+
+def load_allowlist(path):
+    """
+    Carga un archivo de texto plano (una entrada por linea, comentarios con #)
+    en un set() normalizado a minusculas. Si el archivo no existe o no se
+    puede leer (encoding invalido, permisos, etc.), retorna un set() vacio
+    y deja el servicio funcionando con la allowlist vacia en vez de tumbarlo.
+    """
+    entries = set()
+    if not os.path.exists(path):
+        logger.info(f"Archivo de allowlist no encontrado en '{path}', se usa allowlist vacía")
+        return entries
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                entries.add(line.lower())
+    except Exception as e:
+        logger.warning(f"No se pudo leer la allowlist desde '{path}', se usa allowlist vacía: {str(e)}")
+        return set()
+    logger.info(f"Allowlist cargada desde '{path}': {len(entries)} entrada(s)")
+    return entries
+
+ALLOWLIST_DOMAINS = load_allowlist(ALLOWLIST_DOMAINS_PATH)
+ALLOWLIST_EMAILS = load_allowlist(ALLOWLIST_EMAILS_PATH)
+
 # Decorador para verificar la API Key
 def require_api_key(f):
     @wraps(f)
@@ -486,14 +519,18 @@ def process_iocs_with_attachments(iocs, attachments):
     iocs['sha256s'] = attachment_sha256s
     return iocs
 
-def filter_recipient_iocs(iocs, recipient_addresses, recipient_domains):
+def filter_recipient_iocs(iocs, recipient_addresses, recipient_domains,
+                          allowlist_emails=None, allowlist_domains=None):
     """
     Filtra direcciones de email y dominios que pertenecen a destinatarios
+    o que estan en la allowlist configurable (config/allowlist_*.txt, HU-03)
     """
+    excluded_addresses = recipient_addresses | (allowlist_emails or set())
+    excluded_domains = recipient_domains | (allowlist_domains or set())
     filtered_emails = set(addr for addr in iocs.get('email_addresses', set())
-                        if addr.lower() not in recipient_addresses)
+                        if addr.lower() not in excluded_addresses)
     filtered_domains = set(domain for domain in iocs.get('domains', set())
-                         if domain.lower() not in recipient_domains)
+                         if domain.lower() not in excluded_domains)
     return filtered_emails, filtered_domains
 
 def structure_iocs(iocs, filtered_emails, filtered_domains):
@@ -694,7 +731,8 @@ def analyze_eml(eml_path):
         # Buscar IOCs y procesar
         iocs = find_iocs_safe(analyzed_content)
         iocs = process_iocs_with_attachments(iocs, attachments)
-        filtered_emails, filtered_domains = filter_recipient_iocs(iocs, recipient_addresses, recipient_domains)
+        filtered_emails, filtered_domains = filter_recipient_iocs(
+            iocs, recipient_addresses, recipient_domains, ALLOWLIST_EMAILS, ALLOWLIST_DOMAINS)
         structured_iocs = structure_iocs(iocs, filtered_emails, filtered_domains)
 
         # Construir resultado
@@ -815,7 +853,8 @@ def analyze_msg(msg_path):
         # Buscar IOCs y procesar
         iocs = find_iocs_safe(analyzed_content)
         iocs = process_iocs_with_attachments(iocs, attachments_info)
-        filtered_emails, filtered_domains = filter_recipient_iocs(iocs, recipient_addresses, recipient_domains)
+        filtered_emails, filtered_domains = filter_recipient_iocs(
+            iocs, recipient_addresses, recipient_domains, ALLOWLIST_EMAILS, ALLOWLIST_DOMAINS)
         structured_iocs = structure_iocs(iocs, filtered_emails, filtered_domains)
 
         # Construir resultado

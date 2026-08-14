@@ -1,0 +1,7 @@
+# Allowlist de correos de confianza propios (HU-03).
+# Un correo por linea, en minusculas. Las lineas vacias y las que
+# empiezan con # se ignoran. Se recarga solo al reiniciar el servicio.
+#
+# Ejemplos (descomentar y ajustar segun corresponda):
+# soporte@midominio.com
+# alertas@midominio.com.co

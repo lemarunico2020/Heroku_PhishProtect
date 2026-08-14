@@ -22,6 +22,7 @@ El servicio está diseñado para integrarse fácilmente en flujos de trabajo de 
 - ✅ **Análisis de adjuntos**: Extrae y calcula hashes de archivos adjuntos.
 - ✅ **Detección automática de formato**: Detecta si el archivo es EML o MSG aunque no tenga la extensión correcta.
 - ✅ **Soporte de IOCs defangueados**: Reconoce indicadores ofuscados manualmente (`hxxp://`, `dominio[.]com`, `actor[at]dominio.com`) y los normaliza antes de extraerlos.
+- ✅ **Allowlist configurable**: Dominios y correos propios o de confianza definidos en `config/allowlist_domains.txt` y `config/allowlist_emails.txt` nunca se reportan como IOC.
 
 ## Requisitos
 
@@ -129,6 +130,22 @@ La API soporta los siguientes formatos de correo electrónico:
 
 - EML: Formato estándar de correo electrónico
 - MSG: Formato de Microsoft Outlook
+
+## Allowlist de dominios y correos de confianza
+
+Para reducir falsos positivos, la API excluye de los IOCs cualquier dominio o correo presente en:
+
+- `config/allowlist_domains.txt` — un dominio por línea
+- `config/allowlist_emails.txt` — un correo por línea
+
+Ambos archivos admiten comentarios con `#` y líneas vacías. Se cargan una única vez al iniciar el servicio (reiniciar la app para reflejar cambios). Si no existen, la API funciona igual que hoy (allowlist vacía, sin errores).
+
+Las rutas son configurables vía variables de entorno:
+
+| Variable | Descripción | Valor por defecto |
+|---|---|---|
+| `ALLOWLIST_DOMAINS_PATH` | Ruta al archivo de dominios permitidos | `config/allowlist_domains.txt` |
+| `ALLOWLIST_EMAILS_PATH` | Ruta al archivo de correos permitidos | `config/allowlist_emails.txt` |
 
 ## Seguridad
 
