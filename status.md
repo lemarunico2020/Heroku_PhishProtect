@@ -6,7 +6,7 @@
 
 ## ▶ Siguiente HU a ejecutar
 
-**HU-12 — Refactor de `app.py` en módulos + `hmac.compare_digest` en API Key** — Sprint 4
+**HU-13 — Dockerfile y despliegue en EasyPanel** — Sprint 4
 
 *(El Sprint 3 completo, HU-08/09/10 — preparación para ML — queda diferido por decisión del usuario el 2026-08-14; no se está trabajando en eso por ahora. Se retoma cuando el usuario lo pida, sin perder el orden original del backlog.)*
 
@@ -36,10 +36,10 @@ Leyenda: `Pendiente` · `En progreso` · `Bloqueada` · `Hecha`
 | 10 | HU-09 | 3 | Features de autenticación y remitente | Bloqueada | — | — | Depende de HU-08 (bloqueada). |
 | 11 | HU-10 | 3 | Features de contenido (urgencia, conteos, adjuntos ejecutables) | Bloqueada | — | — | Depende de HU-08 (bloqueada). |
 | 12 | HU-11 | 4 | Tuning de gunicorn y límites de recursos | Hecha | 2026-08-14 | `8bb5891` | `Procfile` ahora usa `-w ${WEB_CONCURRENCY:-2} --threads ${GUNICORN_THREADS:-2} -k gthread --timeout ${GUNICORN_TIMEOUT:-60}`, configurable por variables de entorno. **gunicorn no corre en Windows** (depende de `fcntl`, no disponible ahí), así que se verificó en un entorno Linux real vía WSL (Ubuntu): arranque con 1 master + 2 workers `gthread`, respuesta correcta en `/` y `/api/v1/check_auth`, y una prueba de carga de 12 requests concurrentes de `/api/v1/analyze_email` (concurrencia real 4 = 2 workers × 2 threads) completadas con éxito en ~1.9s. `README.md` documenta las variables y valores recomendados según CPU (priorizar threads sobre workers, el análisis es mayormente I/O-bound) y la necesidad de alinear `MAX_FILE_SIZE_MB` con cualquier límite de body de un proxy delante de gunicorn. Sin cambios en `app.py`; suite de pytest (47 tests) sigue en verde, `bandit`/`pip-audit` sin hallazgos nuevos. |
-| 13 | HU-12 | 4 | Refactor de `app.py` en módulos + `hmac.compare_digest` en API Key | Pendiente | — | — | Incluye corrección de timing attack detectada |
+| 13 | HU-12 | 4 | Refactor de `app.py` en módulos + `hmac.compare_digest` en API Key | Hecha | 2026-08-14 | `e78ca1d` | `app.py` (~1400 líneas) separado en `settings.py`, `responses.py`, `auth.py`, `iocs.py`, `routes.py` (Blueprint) y `parsers/{eml,msg,attachments}.py`. **Corrección de timing attack real**: `hmac.compare_digest` reemplaza `!=` en la comparación de la API Key. Desviación de nombre: `settings.py` en vez de `config.py` (como sugiere la HU) para evitar colisión con el directorio `config/` ya existente (allowlist de HU-03) — Python la resuelve de forma determinista pero es confusa. Detalle de diseño: `parsers/eml.py`/`parsers/msg.py` leen `settings.ALLOWLIST_DOMAINS`/`EMAILS` con acceso calificado al módulo (no import de nombre suelto) para que el monkeypatch de tests siga afectando el valor real en tiempo de ejecución; `tests/test_allowlist.py` se actualizó para hacer monkeypatch sobre `settings` en vez de `app` (único cambio en un test existente, mismas aserciones). Suite completa (47 tests) en verde sin cambios de lógica, `bandit -r .` sobre todo el proyecto (mismos 3 hallazgos preexistentes + ruido esperado de `B101 assert_used` en `tests/`), `pip-audit` sin cambios. Verificado con smoke test manual de los 5 endpoints y arranque real bajo gunicorn en WSL (Linux) importando el paquete `parsers/` correctamente. |
 | 14 | HU-13 | 4 | Dockerfile y despliegue en EasyPanel | Pendiente | — | — | |
 
-**Progreso:** 9 / 14 HU completadas (64%) — Sprint 1 y Sprint 2 completos; Sprint 3 (ML) diferido por decisión del usuario
+**Progreso:** 10 / 14 HU completadas (71%) — Sprint 1 y Sprint 2 completos; Sprint 3 (ML) diferido por decisión del usuario
 
 **Nota sobre muestras reales:** se encontró un correo `.msg` real suelto en la raíz del proyecto durante HU-01. Se movió a `samples/` (carpeta agregada a `.gitignore`, nunca se sube al repo) para usarla como muestra de pruebas manuales.
 
