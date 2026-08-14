@@ -6,7 +6,7 @@
 
 ## ▶ Siguiente HU a ejecutar
 
-**HU-11 — Tuning de gunicorn y límites de recursos** — Sprint 4
+**HU-12 — Refactor de `app.py` en módulos + `hmac.compare_digest` en API Key** — Sprint 4
 
 *(El Sprint 3 completo, HU-08/09/10 — preparación para ML — queda diferido por decisión del usuario el 2026-08-14; no se está trabajando en eso por ahora. Se retoma cuando el usuario lo pida, sin perder el orden original del backlog.)*
 
@@ -35,11 +35,11 @@ Leyenda: `Pendiente` · `En progreso` · `Bloqueada` · `Hecha`
 | 9 | HU-08 | 3 | Diseño del esquema `ml_features` | Bloqueada | — | — | Diferida por decisión del usuario (2026-08-14): "el tema de ML no lo quiero hacer todavía". Ya existe un borrador sin commitear en `docs/ml_features_schema.md` (propuesta de esquema con 9 campos + `ml_features_version`, pendiente de revisión) — retomar desde ahí cuando se reactive. Se desbloquea cuando el usuario pida continuar con ML. |
 | 10 | HU-09 | 3 | Features de autenticación y remitente | Bloqueada | — | — | Depende de HU-08 (bloqueada). |
 | 11 | HU-10 | 3 | Features de contenido (urgencia, conteos, adjuntos ejecutables) | Bloqueada | — | — | Depende de HU-08 (bloqueada). |
-| 12 | HU-11 | 4 | Tuning de gunicorn y límites de recursos | Pendiente | — | — | |
+| 12 | HU-11 | 4 | Tuning de gunicorn y límites de recursos | Hecha | 2026-08-14 | `8bb5891` | `Procfile` ahora usa `-w ${WEB_CONCURRENCY:-2} --threads ${GUNICORN_THREADS:-2} -k gthread --timeout ${GUNICORN_TIMEOUT:-60}`, configurable por variables de entorno. **gunicorn no corre en Windows** (depende de `fcntl`, no disponible ahí), así que se verificó en un entorno Linux real vía WSL (Ubuntu): arranque con 1 master + 2 workers `gthread`, respuesta correcta en `/` y `/api/v1/check_auth`, y una prueba de carga de 12 requests concurrentes de `/api/v1/analyze_email` (concurrencia real 4 = 2 workers × 2 threads) completadas con éxito en ~1.9s. `README.md` documenta las variables y valores recomendados según CPU (priorizar threads sobre workers, el análisis es mayormente I/O-bound) y la necesidad de alinear `MAX_FILE_SIZE_MB` con cualquier límite de body de un proxy delante de gunicorn. Sin cambios en `app.py`; suite de pytest (47 tests) sigue en verde, `bandit`/`pip-audit` sin hallazgos nuevos. |
 | 13 | HU-12 | 4 | Refactor de `app.py` en módulos + `hmac.compare_digest` en API Key | Pendiente | — | — | Incluye corrección de timing attack detectada |
 | 14 | HU-13 | 4 | Dockerfile y despliegue en EasyPanel | Pendiente | — | — | |
 
-**Progreso:** 8 / 14 HU completadas (57%) — Sprint 1 y Sprint 2 completos
+**Progreso:** 9 / 14 HU completadas (64%) — Sprint 1 y Sprint 2 completos; Sprint 3 (ML) diferido por decisión del usuario
 
 **Nota sobre muestras reales:** se encontró un correo `.msg` real suelto en la raíz del proyecto durante HU-01. Se movió a `samples/` (carpeta agregada a `.gitignore`, nunca se sube al repo) para usarla como muestra de pruebas manuales.
 
