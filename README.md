@@ -66,6 +66,27 @@ pip install -r requirements.txt
 python app.py
 ```
 
+## Estructura del proyecto
+
+Desde HU-12, el código está organizado en módulos según responsabilidad (antes vivía todo en un único `app.py`):
+
+```
+app.py               # Punto de entrada: crea la app Flask y registra el blueprint de rutas
+settings.py           # Configuración: logging, API Key, límites de tamaño, allowlist
+responses.py          # Helpers de formato de respuesta HTTP/JSON
+auth.py               # Decorador require_api_key (hmac.compare_digest)
+iocs.py                # Búsqueda/filtrado/estructuración de IOCs y ensamblado del resultado final
+routes.py             # Endpoints Flask (Blueprint)
+parsers/
+  eml.py               # Parseo y análisis de archivos EML
+  msg.py               # Parseo y análisis de archivos MSG (Outlook)
+  attachments.py        # Extracción de texto de adjuntos TXT/HTML/PDF (compartido entre eml.py y msg.py)
+config/                # Archivos de configuración en texto plano (allowlist_domains.txt, allowlist_emails.txt) — NO es un paquete Python
+tests/                 # Suite de pytest
+```
+
+**Nota de nombres:** el módulo de configuración se llama `settings.py` y no `config.py` para evitar la colisión con el directorio `config/` ya existente (los archivos de texto plano de la allowlist de HU-03). Python resuelve esa colisión de forma determinista, pero es una fuente de confusión evitable.
+
 ## Uso
 
 ### Endpoint API
