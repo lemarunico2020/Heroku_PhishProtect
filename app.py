@@ -9,6 +9,7 @@ from email import policy
 from email.parser import BytesParser
 from email.utils import parsedate_to_datetime
 from ioc_finder import find_iocs
+import ioc_fanger
 import json
 from logging.handlers import RotatingFileHandler
 from functools import wraps
@@ -564,6 +565,19 @@ def build_analysis_result(file_path, file_type, email_from, email_to, subject, e
         "findings": structured_iocs
     }
 
+def fang_content_safe(content):
+    """
+    Revierte IOCs defangueados (hxxp://, dominio[.]com, actor[at]dominio.com)
+    a su forma normal antes de la busqueda de IOCs. Se llama DESPUES de
+    truncar el contenido a MAX_CONTENT_ANALYSIS_SIZE (mitigacion de ReDoS
+    sobre payloads de tamano arbitrario).
+    """
+    try:
+        return ioc_fanger.fang(content)
+    except Exception as e:
+        logger.error(f"Error al aplicar de-fanging de IOCs: {str(e)}", exc_info=True)
+        return content
+
 def find_iocs_safe(content):
     """
     Busca IOCs con manejo de errores mejorado
@@ -675,6 +689,7 @@ def analyze_eml(eml_path):
 
         full_content = "\n".join(header_content + additional_headers + [email_body])
         analyzed_content = full_content[:MAX_CONTENT_ANALYSIS_SIZE] if len(full_content) > MAX_CONTENT_ANALYSIS_SIZE else full_content
+        analyzed_content = fang_content_safe(analyzed_content)
 
         # Buscar IOCs y procesar
         iocs = find_iocs_safe(analyzed_content)
@@ -795,6 +810,7 @@ def analyze_msg(msg_path):
 
         full_content = "\n".join(header_content + additional_headers + ([email_body] if email_body else []))
         analyzed_content = full_content[:MAX_CONTENT_ANALYSIS_SIZE] if len(full_content) > MAX_CONTENT_ANALYSIS_SIZE else full_content
+        analyzed_content = fang_content_safe(analyzed_content)
 
         # Buscar IOCs y procesar
         iocs = find_iocs_safe(analyzed_content)

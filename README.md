@@ -21,6 +21,7 @@ El servicio está diseñado para integrarse fácilmente en flujos de trabajo de 
 - ✅ **API RESTful**: Integración sencilla con otras herramientas y plataformas.
 - ✅ **Análisis de adjuntos**: Extrae y calcula hashes de archivos adjuntos.
 - ✅ **Detección automática de formato**: Detecta si el archivo es EML o MSG aunque no tenga la extensión correcta.
+- ✅ **Soporte de IOCs defangueados**: Reconoce indicadores ofuscados manualmente (`hxxp://`, `dominio[.]com`, `actor[at]dominio.com`) y los normaliza antes de extraerlos.
 
 ## Requisitos
 

@@ -1,0 +1,16 @@
+From: remitente-defanged-test@ejemplo-dominio-test.com
+To: destinatario@empresa-cliente-test.com
+Subject: Prueba de IOCs defangueados
+Date: Wed, 12 Aug 2026 11:00:00 +0000
+Message-ID: <test-defanged-001@ejemplo-dominio-test.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Estimado usuario,
+
+Verifique su cuenta en hxxps://dominio-defangeado-test[.]com/pago
+
+Tambien puede contactar a actor-malicioso[at]dominio-defangeado-test[.]com
+
+IP de referencia: 203[.]0[.]113[.]77
