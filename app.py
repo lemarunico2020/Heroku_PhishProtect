@@ -5,6 +5,9 @@ import logging
 import re
 import hashlib
 import ipaddress
+import signal
+import mimetypes
+from bs4 import BeautifulSoup
 from datetime import datetime, timezone
 from email import policy
 from email.parser import BytesParser
@@ -685,25 +688,97 @@ def find_iocs_safe(content):
             'mac_addresses': set(), 'user_agents': set()
         }
 
+TEXT_ATTACHMENT_CONTENT_TYPES = {'text/plain', 'text/html'}
+ATTACHMENT_HTML_PARSE_TIMEOUT_SECONDS = 5
+
+def _extract_html_text_with_timeout(html_content, timeout_seconds=ATTACHMENT_HTML_PARSE_TIMEOUT_SECONDS):
+    """
+    Extrae el texto visible de HTML con BeautifulSoup usando el parser
+    html.parser (stdlib, sin resolucion de entidades externas: evita
+    XXE/billion-laughs). No renderiza el HTML (sin JS, sin resolver
+    recursos externos como <img src=...>, evitando SSRF).
+
+    Aplica un timeout duro via signal.alarm cuando esta disponible (workers
+    gunicorn sync, un solo hilo por proceso). En Windows, o si se invoca
+    fuera del hilo principal (signal.alarm solo funciona ahi), se degrada
+    a parseo sin timeout duro, mitigado igualmente por MAX_ATTACHMENT_SIZE.
+    """
+    if hasattr(signal, 'SIGALRM'):
+        try:
+            def _handle_timeout(signum, frame):
+                raise TimeoutError("Tiempo de parseo de adjunto HTML excedido")
+            previous_handler = signal.signal(signal.SIGALRM, _handle_timeout)
+            signal.alarm(timeout_seconds)
+            try:
+                return BeautifulSoup(html_content, "html.parser").get_text()
+            finally:
+                signal.alarm(0)
+                signal.signal(signal.SIGALRM, previous_handler)
+        except ValueError:
+            logger.debug("signal.alarm no disponible en este hilo, parseando adjunto HTML sin timeout duro")
+            return BeautifulSoup(html_content, "html.parser").get_text()
+    return BeautifulSoup(html_content, "html.parser").get_text()
+
+def extract_attachment_text(filename, content_type, data):
+    """
+    Extrae el texto de un adjunto de tipo texto plano o HTML para incluirlo
+    en el contenido analizado en busca de IOCs (HU-06). Solo procesa
+    text/plain y text/html, por debajo de MAX_ATTACHMENT_SIZE; cualquier
+    otro tipo (binarios, ejecutables, PDFs) se ignora sin intentar
+    decodificarlo. Cualquier error se captura y devuelve texto vacio, sin
+    tumbar el analisis del correo completo.
+    """
+    if content_type not in TEXT_ATTACHMENT_CONTENT_TYPES:
+        return ""
+    if not data or len(data) > MAX_ATTACHMENT_SIZE:
+        return ""
+
+    decoded = None
+    for encoding in ['utf-8', 'latin1', 'cp1252', 'ascii', 'iso-8859-1']:
+        try:
+            decoded = data.decode(encoding)
+            break
+        except UnicodeDecodeError:
+            continue
+
+    if decoded is None:
+        logger.warning(f"No se pudo decodificar el adjunto de texto: {filename}")
+        return ""
+
+    if content_type == 'text/plain':
+        return decoded
+
+    try:
+        return _extract_html_text_with_timeout(decoded)
+    except Exception as e:
+        logger.warning(f"Error al extraer texto del adjunto HTML {filename}: {str(e)}")
+        return ""
+
 def extract_eml_attachments(msg):
     """
-    Extrae archivos adjuntos de un mensaje EML y calcula sus hashes
-    Con optimizaciones para manejar adjuntos grandes
+    Extrae archivos adjuntos de un mensaje EML, calcula sus hashes y, para
+    adjuntos de texto plano/HTML, extrae su texto visible (HU-06).
+    Con optimizaciones para manejar adjuntos grandes.
+
+    Devuelve (attachments, attachment_texts): metadatos para la respuesta
+    JSON y una lista separada de textos extraidos para alimentar la
+    busqueda de IOCs.
     """
     attachments = []
-    
+    attachment_texts = []
+
     if msg.is_multipart():
         for part in msg.walk():
             if part.get_content_maintype() == 'multipart':
                 continue
-                
+
             # Verificar si es un adjunto
             filename = part.get_filename()
             if filename:
                 try:
                     logger.debug(f"Procesando adjunto: {filename}")
                     content_type = part.get_content_type()
-                    
+
                     # Obtener datos del adjunto
                     attachment_data = part.get_payload(decode=True)
                     if attachment_data:
@@ -714,23 +789,26 @@ def extract_eml_attachments(msg):
                             "content_type": content_type,
                             "size": attachment_size
                         }
-                        
+
                         if attachment_size <= MAX_ATTACHMENT_SIZE:
                             # Calcular hashes
                             hashes = calculate_file_hashes(attachment_data)
                             attachment_info["hashes"] = hashes
+                            extracted_text = extract_attachment_text(filename, content_type, attachment_data)
+                            if extracted_text:
+                                attachment_texts.append(extracted_text)
                         else:
                             logger.warning(f"Adjunto demasiado grande para calcular hashes: {filename}, tamaño: {attachment_size} bytes")
                             attachment_info["hashes"] = {
                                 "info": "Adjunto demasiado grande para calcular hashes"
                             }
-                        
+
                         attachments.append(attachment_info)
                         logger.debug(f"Adjunto procesado: {filename}, tamaño: {attachment_size} bytes")
                 except Exception as e:
                     logger.error(f"Error al procesar adjunto {filename}: {str(e)}", exc_info=True)
-    
-    return attachments
+
+    return attachments, attachment_texts
 
 def analyze_eml(eml_path):
     """
@@ -764,7 +842,7 @@ def analyze_eml(eml_path):
         email_date = parse_email_date(msg)
         auth_results = parse_authentication_results(msg)
         email_headers = extract_email_headers(msg)
-        attachments = extract_eml_attachments(msg)
+        attachments, attachment_texts = extract_eml_attachments(msg)
         logger.debug(f"Se encontraron {len(attachments)} adjuntos")
 
         # Preparar contenido para análisis de IOCs
@@ -778,7 +856,7 @@ def analyze_eml(eml_path):
         if email_headers.get('received_chain'):
             additional_headers.extend(email_headers['received_chain'])
 
-        full_content = "\n".join(header_content + additional_headers + [email_body])
+        full_content = "\n".join(header_content + additional_headers + [email_body] + attachment_texts)
         analyzed_content = full_content[:MAX_CONTENT_ANALYSIS_SIZE] if len(full_content) > MAX_CONTENT_ANALYSIS_SIZE else full_content
         analyzed_content = fang_content_safe(analyzed_content)
 
@@ -808,9 +886,14 @@ def analyze_eml(eml_path):
 
 def extract_msg_attachments(msg):
     """
-    Extrae archivos adjuntos de un mensaje MSG y calcula sus hashes
+    Extrae archivos adjuntos de un mensaje MSG, calcula sus hashes y, para
+    adjuntos de texto plano/HTML, extrae su texto visible (HU-06).
+
+    Devuelve (attachments_info, attachment_texts), igual que
+    extract_eml_attachments.
     """
     attachments_info = []
+    attachment_texts = []
     for attachment in msg.attachments:
         try:
             if hasattr(attachment, 'longFilename') and attachment.longFilename and hasattr(attachment, 'data') and attachment.data:
@@ -819,6 +902,13 @@ def extract_msg_attachments(msg):
 
                 if attachment_size <= MAX_ATTACHMENT_SIZE:
                     attachment_info["hashes"] = calculate_file_hashes(attachment.data)
+                    content_type = getattr(attachment, 'mimetype', None)
+                    if not content_type:
+                        guessed_type, _ = mimetypes.guess_type(attachment.longFilename)
+                        content_type = guessed_type or ''
+                    extracted_text = extract_attachment_text(attachment.longFilename, content_type, attachment.data)
+                    if extracted_text:
+                        attachment_texts.append(extracted_text)
                 else:
                     logger.warning(f"Adjunto muy grande para hashes: {attachment.longFilename}")
                     attachment_info["hashes"] = {"info": "Adjunto demasiado grande para calcular hashes"}
@@ -826,7 +916,7 @@ def extract_msg_attachments(msg):
                 attachments_info.append(attachment_info)
         except Exception as e:
             logger.error(f"Error procesando adjunto MSG: {str(e)}", exc_info=True)
-    return attachments_info
+    return attachments_info, attachment_texts
 
 def parse_msg_authentication(msg):
     """
@@ -881,7 +971,7 @@ def analyze_msg(msg_path):
 
         msg_headers = extract_msg_headers(msg)
         auth_results = parse_msg_authentication(msg)
-        attachments_info = extract_msg_attachments(msg)
+        attachments_info, attachment_texts = extract_msg_attachments(msg)
         logger.debug(f"Se encontraron {len(attachments_info)} adjuntos")
 
         # Preparar contenido para análisis de IOCs
@@ -900,7 +990,7 @@ def analyze_msg(msg_path):
         if msg_headers.get('received_chain'):
             additional_headers.extend(msg_headers['received_chain'])
 
-        full_content = "\n".join(header_content + additional_headers + ([email_body] if email_body else []))
+        full_content = "\n".join(header_content + additional_headers + ([email_body] if email_body else []) + attachment_texts)
         analyzed_content = full_content[:MAX_CONTENT_ANALYSIS_SIZE] if len(full_content) > MAX_CONTENT_ANALYSIS_SIZE else full_content
         analyzed_content = fang_content_safe(analyzed_content)
 

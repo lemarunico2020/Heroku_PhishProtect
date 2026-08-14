@@ -24,6 +24,7 @@ El servicio está diseñado para integrarse fácilmente en flujos de trabajo de 
 - ✅ **Soporte de IOCs defangueados**: Reconoce indicadores ofuscados manualmente (`hxxp://`, `dominio[.]com`, `actor[at]dominio.com`) y los normaliza antes de extraerlos.
 - ✅ **Allowlist configurable**: Dominios y correos propios o de confianza definidos en `config/allowlist_domains.txt` y `config/allowlist_emails.txt` nunca se reportan como IOC.
 - ✅ **IP de origen probable**: `data.cabeceras_email.originating_ip_guess` expone la primera IP pública encontrada recorriendo la cadena `Received` desde el salto más cercano al origen, excluyendo rangos privados/reservados/loopback/multicast.
+- ✅ **Búsqueda de IOCs en adjuntos de texto**: el texto visible de adjuntos `.txt`/`.html` (por debajo del límite de tamaño de adjunto) también se analiza en busca de IOCs. El HTML se procesa solo con `html.parser` (sin renderizar, sin resolver recursos externos) para extraer texto visible de forma segura.
 
 ## Requisitos
 
@@ -33,6 +34,7 @@ El servicio está diseñado para integrarse fácilmente en flujos de trabajo de 
 - Python-dateutil
 - Email-validator
 - Extract-msg (para archivos MSG)
+- BeautifulSoup4 (para extracción de texto de adjuntos HTML)
 - Gunicorn (para producción)
 
 ## Instalación y Despliegue
