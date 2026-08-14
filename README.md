@@ -138,6 +138,10 @@ Este servicio está diseñado para análisis de seguridad. Ten en cuenta:
 - Elimina los archivos temporales después del análisis.
 - Implementa logs detallados para auditoría.
 
+### Riesgos de dependencias aceptados
+
+- **`d8s-lists==0.8.0`** aparece en `pip-audit` bajo el advisory `PYSEC-2022-43027`, sin versión corregida disponible (el advisory cubre todas las versiones publicadas, sin un evento de "fixed" registrado). El backdoor real que originó el advisory estaba en una dependencia con otro nombre, `democritus-dicts` v0.1.0 (el proyecto completo se renombró de `democritus-*` a `d8s-*` tras el incidente). Se verificó que **ningún paquete `democritus-*` está presente** en el árbol de dependencias instalado, y que `d8s-lists` depende de `d8s-dicts` (el paquete renombrado, no el comprometido). Se acepta como riesgo residual, revisado el 2026-08-13; se re-evalúa si `ioc-finder` deja de depender de `d8s-lists` en una futura versión.
+
 ## Contribuir
 
 Las contribuciones son bienvenidas. Para contribuir:
