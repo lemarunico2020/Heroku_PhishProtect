@@ -131,6 +131,16 @@ La API soporta los siguientes formatos de correo electrónico:
 - EML: Formato estándar de correo electrónico
 - MSG: Formato de Microsoft Outlook
 
+## Logging
+
+El nivel de logging es configurable vía la variable de entorno `LOG_LEVEL` (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`). Por defecto es `INFO` (antes era `DEBUG` de forma fija), para no volcar en `ioc_finder.log` cabeceras completas ni contenido decodificado en producción. Un valor no reconocido cae a `INFO` sin interrumpir el arranque del servicio.
+
+Ningún log de nivel `INFO` o superior contiene el valor de la API Key ni el cuerpo completo del correo analizado.
+
+```bash
+LOG_LEVEL=DEBUG python app.py  # diagnóstico puntual con detalle completo
+```
+
 ## Allowlist de dominios y correos de confianza
 
 Para reducir falsos positivos, la API excluye de los IOCs cualquier dominio o correo presente en:

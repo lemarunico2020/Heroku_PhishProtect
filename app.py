@@ -17,9 +17,25 @@ import extract_msg  # Importación para archivos MSG
 
 app = Flask(__name__)
 
-# Configurar logging
+# Configurar logging. Nivel por defecto INFO (no DEBUG) para no volcar
+# cabeceras completas ni contenido decodificado en producción; configurable
+# vía LOG_LEVEL para habilitar DEBUG puntualmente en diagnóstico.
+VALID_LOG_LEVELS = {'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'}
+
+def resolve_log_level(raw_value):
+    """
+    Valida y normaliza el valor de LOG_LEVEL. Si esta ausente o no es uno
+    de los niveles reconocidos por logging, cae a INFO en vez de fallar
+    el arranque del servicio.
+    """
+    normalized = (raw_value or 'INFO').upper()
+    return normalized if normalized in VALID_LOG_LEVELS else 'INFO'
+
+_raw_log_level = os.environ.get('LOG_LEVEL', 'INFO')
+LOG_LEVEL = resolve_log_level(_raw_log_level)
+
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=LOG_LEVEL,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         RotatingFileHandler(
@@ -31,6 +47,9 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+if _raw_log_level.upper() not in VALID_LOG_LEVELS:
+    logger.warning(f"LOG_LEVEL inválido: '{_raw_log_level}', usando INFO por defecto")
 
 # Obtener la API Key de las variables de entorno (con fallback para desarrollo)
 API_KEY = os.environ.get('PHISHPROTECT_API_KEY', 'mi-api-key-de-prueba')
@@ -249,7 +268,7 @@ def extract_email_headers(msg):
     try:
         # Logging de todas las cabeceras disponibles para diagnóstico
         all_headers = list(msg.keys())
-        logger.info(f"Cabeceras disponibles en EML: {all_headers}")
+        logger.debug(f"Cabeceras disponibles en EML: {all_headers}")
 
         # Extraer cabeceras estándar
         return_path = msg.get('return-path', None)
@@ -274,7 +293,7 @@ def extract_email_headers(msg):
                 if received:
                     received_chain.append(str(received))
 
-        logger.info(f"Cabeceras extraídas - Return-Path: {return_path}, Reply-To: {reply_to}, X-Originating-IP: {x_originating_ip}, Received: {len(received_chain)}, Auth: {'Sí' if authentication_results else 'No'}")
+        logger.debug(f"Cabeceras extraídas - Return-Path: {return_path}, Reply-To: {reply_to}, X-Originating-IP: {x_originating_ip}, Received: {len(received_chain)}, Auth: {'Sí' if authentication_results else 'No'}")
 
         return {
             "return_path": return_path,
