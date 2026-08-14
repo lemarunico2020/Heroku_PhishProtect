@@ -25,6 +25,7 @@ El servicio está diseñado para integrarse fácilmente en flujos de trabajo de 
 - ✅ **Allowlist configurable**: Dominios y correos propios o de confianza definidos en `config/allowlist_domains.txt` y `config/allowlist_emails.txt` nunca se reportan como IOC.
 - ✅ **IP de origen probable**: `data.cabeceras_email.originating_ip_guess` expone la primera IP pública encontrada recorriendo la cadena `Received` desde el salto más cercano al origen, excluyendo rangos privados/reservados/loopback/multicast.
 - ✅ **Búsqueda de IOCs en adjuntos de texto**: el texto visible de adjuntos `.txt`/`.html` (por debajo del límite de tamaño de adjunto) también se analiza en busca de IOCs. El HTML se procesa solo con `html.parser` (sin renderizar, sin resolver recursos externos) para extraer texto visible de forma segura.
+- ✅ **Búsqueda de IOCs en adjuntos PDF**: el texto de adjuntos `.pdf` (primeras 20 páginas, con timeout de 5s por adjunto en plataformas Unix) también se analiza en busca de IOCs. Un PDF corrupto o que exceda el timeout no interrumpe el análisis del correo.
 
 ## Requisitos
 
@@ -35,6 +36,7 @@ El servicio está diseñado para integrarse fácilmente en flujos de trabajo de 
 - Email-validator
 - Extract-msg (para archivos MSG)
 - BeautifulSoup4 (para extracción de texto de adjuntos HTML)
+- Pypdf (para extracción de texto de adjuntos PDF)
 - Gunicorn (para producción)
 
 ## Instalación y Despliegue

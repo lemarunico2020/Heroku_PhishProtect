@@ -1,0 +1,34 @@
+From: "Soporte Seguridad" <soporte@ejemplo-remitente-test.com>
+To: destinatario@empresa-cliente-test.com
+Subject: Prueba de adjunto PDF sintetico para HU-07
+Date: Wed, 12 Aug 2026 10:18:00 +0000
+Message-ID: <test-pdf-attachment-001@ejemplo-remitente-test.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="BOUNDARY_PDF_ATTACH"
+
+--BOUNDARY_PDF_ATTACH
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Correo sintetico de prueba con un adjunto PDF para HU-07
+(extraccion de texto de adjuntos PDF, stretch).
+
+--BOUNDARY_PDF_ATTACH
+Content-Type: application/pdf; name="factura.pdf"
+Content-Disposition: attachment; filename="factura.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2Jq
+CjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2Jq
+CjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvUmVzb3VyY2VzIDw8IC9Gb250
+IDw8IC9GMSA0IDAgUiA+PiA+PiAvTWVkaWFCb3ggWzAgMCA2MTIgNzkyXSAvQ29udGVudHMgNSAw
+IFIgPj4KZW5kb2JqCjQgMCBvYmoKPDwgL1R5cGUgL0ZvbnQgL1N1YnR5cGUgL1R5cGUxIC9CYXNl
+Rm9udCAvSGVsdmV0aWNhID4+CmVuZG9iago1IDAgb2JqCjw8IC9MZW5ndGggMTMwID4+CnN0cmVh
+bQpCVCAvRjEgMTIgVGYgNzIgNzEyIFRkIChDb250YWN0bzogYWN0b3ItcGRmLXRlc3RAZWplbXBs
+by1yZW1pdGVudGUtdGVzdC5jb20gVVJMOiBodHRwOi8vYWRqdW50by1wZGYtbWFsaWNpb3NvLXRl
+c3QuY29tL3BhZ28pIFRqIEVUCmVuZHN0cmVhbQplbmRvYmoKeHJlZgowIDYKMDAwMDAwMDAwMCA2
+NTUzNSBmIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwNTggMDAwMDAgbiAKMDAwMDAwMDEx
+NSAwMDAwMCBuIAowMDAwMDAwMjQxIDAwMDAwIG4gCjAwMDAwMDAzMTEgMDAwMDAgbiAKdHJhaWxl
+cgo8PCAvU2l6ZSA2IC9Sb290IDEgMCBSID4+CnN0YXJ0eHJlZgo0OTIKJSVFT0Y=
+
+--BOUNDARY_PDF_ATTACH--

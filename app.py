@@ -7,7 +7,9 @@ import hashlib
 import ipaddress
 import signal
 import mimetypes
+from io import BytesIO
 from bs4 import BeautifulSoup
+from pypdf import PdfReader
 from datetime import datetime, timezone
 from email import policy
 from email.parser import BytesParser
@@ -689,7 +691,34 @@ def find_iocs_safe(content):
         }
 
 TEXT_ATTACHMENT_CONTENT_TYPES = {'text/plain', 'text/html'}
+PDF_ATTACHMENT_CONTENT_TYPE = 'application/pdf'
 ATTACHMENT_HTML_PARSE_TIMEOUT_SECONDS = 5
+ATTACHMENT_PDF_PARSE_TIMEOUT_SECONDS = 5
+MAX_PDF_PAGES_PROCESSED = 20
+
+def _run_with_timeout(func, timeout_seconds, timeout_message):
+    """
+    Ejecuta func() con un timeout duro via signal.alarm cuando esta
+    disponible (workers gunicorn sync, un solo hilo por proceso). En
+    Windows, o si se invoca fuera del hilo principal (signal.alarm solo
+    funciona ahi), se degrada a ejecutar sin timeout duro, mitigado
+    igualmente por MAX_ATTACHMENT_SIZE (y, para PDF, MAX_PDF_PAGES_PROCESSED).
+    """
+    if hasattr(signal, 'SIGALRM'):
+        try:
+            def _handle_timeout(signum, frame):
+                raise TimeoutError(timeout_message)
+            previous_handler = signal.signal(signal.SIGALRM, _handle_timeout)
+            signal.alarm(timeout_seconds)
+            try:
+                return func()
+            finally:
+                signal.alarm(0)
+                signal.signal(signal.SIGALRM, previous_handler)
+        except ValueError:
+            logger.debug("signal.alarm no disponible en este hilo, ejecutando sin timeout duro")
+            return func()
+    return func()
 
 def _extract_html_text_with_timeout(html_content, timeout_seconds=ATTACHMENT_HTML_PARSE_TIMEOUT_SECONDS):
     """
@@ -697,40 +726,57 @@ def _extract_html_text_with_timeout(html_content, timeout_seconds=ATTACHMENT_HTM
     html.parser (stdlib, sin resolucion de entidades externas: evita
     XXE/billion-laughs). No renderiza el HTML (sin JS, sin resolver
     recursos externos como <img src=...>, evitando SSRF).
-
-    Aplica un timeout duro via signal.alarm cuando esta disponible (workers
-    gunicorn sync, un solo hilo por proceso). En Windows, o si se invoca
-    fuera del hilo principal (signal.alarm solo funciona ahi), se degrada
-    a parseo sin timeout duro, mitigado igualmente por MAX_ATTACHMENT_SIZE.
     """
-    if hasattr(signal, 'SIGALRM'):
-        try:
-            def _handle_timeout(signum, frame):
-                raise TimeoutError("Tiempo de parseo de adjunto HTML excedido")
-            previous_handler = signal.signal(signal.SIGALRM, _handle_timeout)
-            signal.alarm(timeout_seconds)
-            try:
-                return BeautifulSoup(html_content, "html.parser").get_text()
-            finally:
-                signal.alarm(0)
-                signal.signal(signal.SIGALRM, previous_handler)
-        except ValueError:
-            logger.debug("signal.alarm no disponible en este hilo, parseando adjunto HTML sin timeout duro")
-            return BeautifulSoup(html_content, "html.parser").get_text()
-    return BeautifulSoup(html_content, "html.parser").get_text()
+    return _run_with_timeout(
+        lambda: BeautifulSoup(html_content, "html.parser").get_text(),
+        timeout_seconds,
+        "Tiempo de parseo de adjunto HTML excedido"
+    )
+
+def _read_pdf_text(data):
+    reader = PdfReader(BytesIO(data))
+    texts = []
+    for page in reader.pages[:MAX_PDF_PAGES_PROCESSED]:
+        page_text = page.extract_text()
+        if page_text:
+            texts.append(page_text)
+    return "\n".join(texts)
+
+def _extract_pdf_text_with_timeout(data, timeout_seconds=ATTACHMENT_PDF_PARSE_TIMEOUT_SECONDS):
+    """
+    Extrae texto de un PDF con pypdf, limitado a las primeras
+    MAX_PDF_PAGES_PROCESSED paginas. Los parsers de PDF son una
+    superficie de ataque historica (decompression bombs, streams
+    malformados que consumen memoria/CPU sin limite); se mitiga con
+    timeout duro (ver _run_with_timeout) y el limite de paginas.
+    """
+    return _run_with_timeout(
+        lambda: _read_pdf_text(data),
+        timeout_seconds,
+        "Tiempo de parseo de adjunto PDF excedido"
+    )
 
 def extract_attachment_text(filename, content_type, data):
     """
-    Extrae el texto de un adjunto de tipo texto plano o HTML para incluirlo
-    en el contenido analizado en busca de IOCs (HU-06). Solo procesa
-    text/plain y text/html, por debajo de MAX_ATTACHMENT_SIZE; cualquier
-    otro tipo (binarios, ejecutables, PDFs) se ignora sin intentar
-    decodificarlo. Cualquier error se captura y devuelve texto vacio, sin
-    tumbar el analisis del correo completo.
+    Extrae el texto de un adjunto de texto plano, HTML o PDF para incluirlo
+    en el contenido analizado en busca de IOCs (HU-06/HU-07). Solo procesa
+    text/plain, text/html y application/pdf, por debajo de
+    MAX_ATTACHMENT_SIZE; cualquier otro tipo (binarios, ejecutables) se
+    ignora sin intentar decodificarlo. Cualquier error (incluye PDFs
+    corruptos, cifrados o que excedan el timeout) se captura y devuelve
+    texto vacio, sin tumbar el analisis del correo completo.
     """
-    if content_type not in TEXT_ATTACHMENT_CONTENT_TYPES:
-        return ""
     if not data or len(data) > MAX_ATTACHMENT_SIZE:
+        return ""
+
+    if content_type == PDF_ATTACHMENT_CONTENT_TYPE:
+        try:
+            return _extract_pdf_text_with_timeout(data)
+        except Exception as e:
+            logger.warning(f"Error al extraer texto del adjunto PDF {filename}: {str(e)}")
+            return ""
+
+    if content_type not in TEXT_ATTACHMENT_CONTENT_TYPES:
         return ""
 
     decoded = None
@@ -757,7 +803,7 @@ def extract_attachment_text(filename, content_type, data):
 def extract_eml_attachments(msg):
     """
     Extrae archivos adjuntos de un mensaje EML, calcula sus hashes y, para
-    adjuntos de texto plano/HTML, extrae su texto visible (HU-06).
+    adjuntos de texto plano/HTML/PDF, extrae su texto visible (HU-06/HU-07).
     Con optimizaciones para manejar adjuntos grandes.
 
     Devuelve (attachments, attachment_texts): metadatos para la respuesta
@@ -887,7 +933,7 @@ def analyze_eml(eml_path):
 def extract_msg_attachments(msg):
     """
     Extrae archivos adjuntos de un mensaje MSG, calcula sus hashes y, para
-    adjuntos de texto plano/HTML, extrae su texto visible (HU-06).
+    adjuntos de texto plano/HTML/PDF, extrae su texto visible (HU-06/HU-07).
 
     Devuelve (attachments_info, attachment_texts), igual que
     extract_eml_attachments.
