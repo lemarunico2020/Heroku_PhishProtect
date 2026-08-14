@@ -1,0 +1,20 @@
+From: "Soporte Seguridad" <soporte@ejemplo-remitente-test.com>
+To: destinatario@empresa-cliente-test.com
+Subject: Prueba de cadena Received con multiples saltos
+Date: Wed, 12 Aug 2026 10:16:30 +0000
+Message-ID: <test-received-chain-001@ejemplo-remitente-test.com>
+MIME-Version: 1.0
+Received: from internal-relay.empresa-cliente-test.com (internal-relay.empresa-cliente-test.com [10.0.0.5])
+ by mx.empresa-cliente-test.com with ESMTP id relay001
+ for <destinatario@empresa-cliente-test.com>; Wed, 12 Aug 2026 10:16:00 +0000
+Received: from smtp-relay.proveedor-test.com (smtp-relay.proveedor-test.com [8.8.8.8])
+ by internal-relay.empresa-cliente-test.com with ESMTP id relay002; Wed, 12 Aug 2026 10:15:50 +0000
+Received: from mx1.ejemplo-remitente-test.com (mx1.ejemplo-remitente-test.com [203.0.113.10])
+ by smtp-relay.proveedor-test.com with ESMTP id relay003; Wed, 12 Aug 2026 10:15:25 +0000
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Correo sintetico de prueba para HU-05 (extraccion de IP del primer salto).
+
+--
+Equipo de Soporte (correo sintetico de prueba)

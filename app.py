@@ -4,6 +4,7 @@ import os
 import logging
 import re
 import hashlib
+import ipaddress
 from datetime import datetime, timezone
 from email import policy
 from email.parser import BytesParser
@@ -580,6 +581,39 @@ def structure_iocs(iocs, filtered_emails, filtered_domains):
         }
     }
 
+# Limite de lineas de received_chain a inspeccionar (mitigacion adicional
+# de costo de regex sobre cadenas Received anomalamente largas).
+MAX_RECEIVED_LINES_PROCESSED = 50
+
+_IPV4_CANDIDATE_RE = re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}\b')
+_IPV6_CANDIDATE_RE = re.compile(r'\b(?:[A-Fa-f0-9]{0,4}:){2,7}[A-Fa-f0-9]{0,4}\b')
+
+def guess_originating_ip(received_chain):
+    """
+    Recorre received_chain de atras hacia adelante (del salto mas antiguo,
+    mas cercano al origen, hacia el mas reciente) y devuelve como string la
+    primera IP publica valida encontrada, o None si no hay ninguna.
+
+    Cada candidato se valida con ipaddress (stdlib) antes de aceptarlo, para
+    no propagar strings mal formados como si fueran IOCs validos, y se
+    descartan rangos privados/reservados/loopback/link-local/multicast
+    (incluye RFC1918 y los rangos de documentacion RFC5737/RFC3849, que
+    ipaddress ya clasifica como no publicos). is_global no excluye
+    multicast por si solo (ej. 224.0.0.1 o ff02::1 dan is_global=True),
+    por lo que se descarta explicitamente con is_multicast.
+    """
+    lines_to_check = list(reversed(received_chain))[:MAX_RECEIVED_LINES_PROCESSED]
+    for received in lines_to_check:
+        candidates = _IPV4_CANDIDATE_RE.findall(received) + _IPV6_CANDIDATE_RE.findall(received)
+        for candidate in candidates:
+            try:
+                ip_obj = ipaddress.ip_address(candidate)
+            except ValueError:
+                continue
+            if ip_obj.is_global and not ip_obj.is_multicast:
+                return str(ip_obj)
+    return None
+
 def build_analysis_result(file_path, file_type, email_from, email_to, subject, email_date,
                          email_body, attachments, auth_results, email_headers, structured_iocs):
     """
@@ -616,7 +650,8 @@ def build_analysis_result(file_path, file_type, email_from, email_to, subject, e
             "x_originating_ip": email_headers["x_originating_ip"],
             "x_mailer": email_headers["x_mailer"],
             "received_chain": email_headers["received_chain"],
-            "authentication_results": email_headers["authentication_results"]
+            "authentication_results": email_headers["authentication_results"],
+            "originating_ip_guess": guess_originating_ip(email_headers["received_chain"])
         },
         "findings": structured_iocs
     }

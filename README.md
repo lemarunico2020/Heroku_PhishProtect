@@ -23,6 +23,7 @@ El servicio está diseñado para integrarse fácilmente en flujos de trabajo de 
 - ✅ **Detección automática de formato**: Detecta si el archivo es EML o MSG aunque no tenga la extensión correcta.
 - ✅ **Soporte de IOCs defangueados**: Reconoce indicadores ofuscados manualmente (`hxxp://`, `dominio[.]com`, `actor[at]dominio.com`) y los normaliza antes de extraerlos.
 - ✅ **Allowlist configurable**: Dominios y correos propios o de confianza definidos en `config/allowlist_domains.txt` y `config/allowlist_emails.txt` nunca se reportan como IOC.
+- ✅ **IP de origen probable**: `data.cabeceras_email.originating_ip_guess` expone la primera IP pública encontrada recorriendo la cadena `Received` desde el salto más cercano al origen, excluyendo rangos privados/reservados/loopback/multicast.
 
 ## Requisitos
 
