@@ -6,7 +6,7 @@
 
 ## ▶ Siguiente HU a ejecutar
 
-**HU-02 — Activar de-fanging de IOCs con `ioc-fanger`** — Sprint 1
+**HU-03 — Allowlist configurable de dominios y correos** — Sprint 1
 
 *(Este bloque se actualiza cada vez que se completa una HU, apuntando a la siguiente en el orden de la tabla de abajo.)*
 
@@ -24,7 +24,7 @@ Leyenda: `Pendiente` · `En progreso` · `Bloqueada` · `Hecha`
 |---|----|--------|--------|--------|-------|--------|-------|
 | 1 | HU-01 | 1 | Test de regresión del contrato de salida | Hecha | 2026-08-13 | `bedf0d1` | Suite en `tests/` (7 tests) usando fixtures sintéticos `.eml`; el caso MSG se cubre a nivel unitario sobre `build_analysis_result` (no se generó `.msg` binario real, requeriría Outlook/pywin32). Se corrigió una suposición incorrecta del test de tipo de archivo no soportado (el parser actual acepta cualquier contenido como EML "vacío" en vez de rechazarlo con 400 — comportamiento existente documentado, no un bug introducido). `bandit`/`pip-audit` corridos como parte del DoD; ver HU-14 para las vulnerabilidades de dependencias detectadas. |
 | 2 | HU-14 | 1 | Actualizar dependencias con vulnerabilidades conocidas (pip-audit) | Hecha | 2026-08-13 | `4a08d22` | Actualizadas: Flask 3.1.0→3.1.3, Werkzeug 3.1.3→3.1.6, Jinja2 3.1.5→3.1.6, click 8.1.8→8.3.3, idna 3.10→3.15. Suite de HU-01 (7 tests) en verde tras reinstalar el venv desde cero; smoke test end-to-end del servidor real (no solo test client) también OK. `d8s-lists==0.8.0` (`PYSEC-2022-43027`) queda como **riesgo aceptado documentado** en `README.md`: el advisory no tiene versión corregida y cubre todas las versiones porque el backdoor original estaba en una dependencia con otro nombre (`democritus-dicts` v0.1.0); se verificó que ningún paquete `democritus-*` está instalado y que `d8s-lists` depende de `d8s-dicts` (el paquete ya renombrado). `pip-audit` final: 1 hallazgo (el aceptado), 0 pendientes de fix. |
-| 3 | HU-02 | 1 | Activar de-fanging de IOCs con `ioc-fanger` | Pendiente | — | — | |
+| 3 | HU-02 | 1 | Activar de-fanging de IOCs con `ioc-fanger` | Hecha | 2026-08-13 | `9534309` | `fang_content_safe()` aplicado en `analyze_eml`/`analyze_msg` despues de truncar a `MAX_CONTENT_ANALYSIS_SIZE`. 2 tests nuevos en `tests/test_ioc_fanger.py` (defangueado + regresion de lo no defangueado). Verificado con smoke test real via curl. `bandit`/`pip-audit` sin hallazgos nuevos. |
 | 4 | HU-03 | 1 | Allowlist configurable de dominios y correos | Pendiente | — | — | |
 | 5 | HU-04 | 1 | Logging configurable por entorno y sin datos sensibles | Pendiente | — | — | |
 | 6 | HU-05 | 2 | Extraer IP del primer salto en `Received` | Pendiente | — | — | |
@@ -37,7 +37,7 @@ Leyenda: `Pendiente` · `En progreso` · `Bloqueada` · `Hecha`
 | 13 | HU-12 | 4 | Refactor de `app.py` en módulos + `hmac.compare_digest` en API Key | Pendiente | — | — | Incluye corrección de timing attack detectada |
 | 14 | HU-13 | 4 | Dockerfile y despliegue en EasyPanel | Pendiente | — | — | |
 
-**Progreso:** 2 / 14 HU completadas (14%)
+**Progreso:** 3 / 14 HU completadas (21%)
 
 **Nota sobre muestras reales:** se encontró un correo `.msg` real suelto en la raíz del proyecto durante HU-01. Se movió a `samples/` (carpeta agregada a `.gitignore`, nunca se sube al repo) para usarla como muestra de pruebas manuales.
 
