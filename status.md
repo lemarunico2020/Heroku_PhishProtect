@@ -6,7 +6,7 @@
 
 ## ▶ Siguiente HU a ejecutar
 
-**HU-05 — Extraer IP del primer salto en `Received`** — Sprint 2
+**HU-06 — Extracción de texto de adjuntos TXT/HTML** — Sprint 2
 
 *(Este bloque se actualiza cada vez que se completa una HU, apuntando a la siguiente en el orden de la tabla de abajo.)*
 
@@ -27,7 +27,7 @@ Leyenda: `Pendiente` · `En progreso` · `Bloqueada` · `Hecha`
 | 3 | HU-02 | 1 | Activar de-fanging de IOCs con `ioc-fanger` | Hecha | 2026-08-13 | `9534309` | `fang_content_safe()` aplicado en `analyze_eml`/`analyze_msg` despues de truncar a `MAX_CONTENT_ANALYSIS_SIZE`. 2 tests nuevos en `tests/test_ioc_fanger.py` (defangueado + regresion de lo no defangueado). Verificado con smoke test real via curl. `bandit`/`pip-audit` sin hallazgos nuevos. |
 | 4 | HU-03 | 1 | Allowlist configurable de dominios y correos | Hecha | 2026-08-14 | `2cc896a` | `config/allowlist_domains.txt` y `config/allowlist_emails.txt` (versionados, con ejemplos comentados) cargados al iniciar via `load_allowlist()`; rutas configurables por `ALLOWLIST_DOMAINS_PATH`/`ALLOWLIST_EMAILS_PATH`. `filter_recipient_iocs` excluye ahora también lo que esté en la allowlist. 8 tests nuevos en `tests/test_allowlist.py` (carga de archivo ausente/con comentarios/corrupto + filtrado end-to-end + regresión con allowlist vacía). Verificado con smoke test real via curl (reinicio de servidor para reflejar cambio en el archivo). `bandit`/`pip-audit` sin hallazgos nuevos. |
 | 5 | HU-04 | 1 | Logging configurable por entorno y sin datos sensibles | Hecha | 2026-08-14 | `dfb701f` | Nivel configurable via `LOG_LEVEL` (default `INFO`, antes `DEBUG` fijo), validado por `resolve_log_level()` con fallback a `INFO` ante valores inválidos. Bajados a `DEBUG` los dos logs de `extract_email_headers` que volcaban cabeceras completas a nivel `INFO` (ya eran `DEBUG` en `extract_msg_headers`, quedan consistentes). Auditados todos los `logger.*`: ninguno imprime la API key ni el cuerpo del correo. 5 tests nuevos en `tests/test_logging_config.py` (`resolve_log_level` + nivel efectivo por defecto + ausencia de datos sensibles/líneas DEBUG en el log generado por una request real, comparando solo el delta escrito durante la prueba para no chocar con el log histórico en DEBUG de sesiones previas). Verificado con smoke test real (`LOG_LEVEL=INFO`) via curl. `bandit`/`pip-audit` sin hallazgos nuevos. |
-| 6 | HU-05 | 2 | Extraer IP del primer salto en `Received` | Pendiente | — | — | |
+| 6 | HU-05 | 2 | Extraer IP del primer salto en `Received` | Hecha | 2026-08-14 | `bc5aea4` | Nuevo campo aditivo `data.cabeceras_email.originating_ip_guess` (EML y MSG, misma función `build_analysis_result`). `guess_originating_ip()` recorre `received_chain` de atrás hacia adelante y devuelve la primera IP pública válida (`ipaddress` stdlib), excluyendo privadas/reservadas/loopback/multicast; nota: `is_global` de `ipaddress` no excluye multicast por sí solo, se excluye explícitamente. Los rangos RFC5737 (`203.0.113.0/24`, etc.) usados en los fixtures sintéticos ya quedan clasificados como no públicos por `ipaddress`, así que se agregó un fixture nuevo (`sample_received_chain.eml`, IP pública `8.8.8.8` como salto intermedio) para probar el caso "IP encontrada". Límite de 50 líneas de `received_chain` procesadas. 9 tests nuevos en `tests/test_originating_ip.py`. Verificado con smoke test real via curl. `bandit`/`pip-audit` sin hallazgos nuevos. |
 | 7 | HU-06 | 2 | Extracción de texto de adjuntos TXT/HTML | Pendiente | — | — | |
 | 8 | HU-07 | 2 | Extracción de texto de adjuntos PDF (stretch) | Pendiente | — | — | Mover a Sprint 3 si Sprint 2 se satura |
 | 9 | HU-08 | 3 | Diseño del esquema `ml_features` | Pendiente | — | — | Requiere revisión/aprobación del esquema antes de HU-09/HU-10 |
@@ -37,7 +37,7 @@ Leyenda: `Pendiente` · `En progreso` · `Bloqueada` · `Hecha`
 | 13 | HU-12 | 4 | Refactor de `app.py` en módulos + `hmac.compare_digest` en API Key | Pendiente | — | — | Incluye corrección de timing attack detectada |
 | 14 | HU-13 | 4 | Dockerfile y despliegue en EasyPanel | Pendiente | — | — | |
 
-**Progreso:** 5 / 14 HU completadas (36%) — Sprint 1 completo
+**Progreso:** 6 / 14 HU completadas (43%) — Sprint 1 completo
 
 **Nota sobre muestras reales:** se encontró un correo `.msg` real suelto en la raíz del proyecto durante HU-01. Se movió a `samples/` (carpeta agregada a `.gitignore`, nunca se sube al repo) para usarla como muestra de pruebas manuales.
 
