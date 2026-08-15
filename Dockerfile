@@ -15,13 +15,16 @@ WORKDIR /app
 # Docker (solo se reinstalan si cambia requirements.txt).
 #
 # --no-deps: requirements.txt ya es una lista completa y "aplanada"
-# (incluye toda dependencia transitiva realmente usada). Sin --no-deps,
-# pip reinstalaria de todos modos sympy/mpmath/hypothesis/d8s-hypothesis
-# (~85MB) porque d8s-math/d8s-strings las declaran como dependencias,
-# aunque el codigo real de ioc-finder nunca las importa (verificado).
-# Ver el comentario al inicio de requirements.txt antes de agregar una
-# dependencia nueva: con --no-deps hay que listar explicitamente cada
-# paquete que haga falta, incluidas sus propias transitivas.
+# (incluye toda dependencia transitiva realmente usada, generada desde
+# un `pip install` limpio sin --no-deps). Sin --no-deps, pip
+# reinstalaria de todos modos sympy/mpmath/hypothesis/d8s-hypothesis
+# (~63MB) porque d8s-math/d8s-strings las declaran como dependencias,
+# aunque el codigo real de ioc-finder nunca las importa (verificado
+# end-to-end, incluido un .msg real). Ver el comentario al inicio de
+# requirements.txt antes de agregar una dependencia nueva: con
+# --no-deps hay que listar explicitamente cada paquete que haga falta,
+# incluidas sus propias transitivas (si falta una, el build de Docker
+# fallara con un ImportError en tiempo de arranque, no en el build).
 COPY requirements.txt .
 RUN pip install --no-cache-dir --no-deps -r requirements.txt
 

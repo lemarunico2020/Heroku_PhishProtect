@@ -4,20 +4,37 @@
 # nueva, agregala EXPLICITAMENTE aca (incluidas sus propias
 # transitivas), o el build de Docker fallara con un ImportError.
 #
-# sympy, mpmath, hypothesis y d8s-hypothesis se quitaron a propósito
-# (verificado 2026-08-15): son dependencias declaradas por d8s-math/
-# d8s-strings pero jamas se importan en el camino real de find_iocs()
-# (sympy solo se usa dentro de funciones de d8s-math que nadie llama;
-# hypothesis es un framework de testing que varios paquetes d8s-*
-# declaran como dependencia de runtime sin necesitarlo en la práctica).
-# Quitarlas reduce el tamaño instalado de ~112MB a ~27MB (-75%). Sin
-# --no-deps, pip las reinstalaria igual para satisfacer esas
-# declaraciones (por eso no alcanza con solo borrar estas lineas).
+# Generada el 2026-08-15 desde un `pip install` limpio (sin --no-deps,
+# entorno genuinamente aislado con `python -I`) del set original, y
+# luego se quitaron a propósito sympy, mpmath, hypothesis y
+# d8s-hypothesis: son dependencias declaradas por d8s-math/d8s-strings
+# pero jamas se importan en el camino real de find_iocs() (sympy solo
+# se usa dentro de funciones de d8s-math que nadie llama; hypothesis
+# es un framework de testing que varios paquetes d8s-* declaran como
+# dependencia de runtime sin necesitarlo en la práctica). Quitarlas
+# reduce el tamaño instalado en ~55% (~112MB -> ~51MB). Verificado con
+# una request HTTP real de punta a punta y el parseo de un .msg real,
+# incluyendo el import completo de extract_msg (que sí necesita todo
+# lo demas de esta lista: RTFDE, cffi, colorclass, compressed-rtf,
+# cryptography, easygui, ebcdic, exceptiongroup, IMAPClient, lark,
+# msoffcrypto-tool, olefile, oletools, pcodedmp, pycparser,
+# red-black-tree-mod, tzlocal).
+#
+# cryptography se pineo en 50.0.0 (no la version que resuelve pip por
+# default) porque 45.0.7 tiene 10 CVEs conocidos con fix disponible
+# (detectados por pip-audit una vez que cryptography quedo explicita
+# en este archivo -antes, al ser una dependencia transitiva no
+# listada, pip-audit -r requirements.txt no la auditaba-). El salto de
+# version (45->50) se verifico de punta a punta sin problemas.
 attrs==25.1.0
 beautifulsoup4==4.12.3
 blinker==1.9.0
+cffi==2.1.1
 click==8.3.3
 colorama==0.4.6
+colorclass==2.2.2
+compressed-rtf==1.0.7
+cryptography==50.0.0
 d8s-dicts==0.6.0
 d8s-lists==0.8.0
 d8s-math==0.7.0
@@ -25,26 +42,39 @@ d8s-strings==0.5.0
 d8s-uuids==0.6.0
 dictdiffer==0.9.0
 dnspython==2.7.0
+easygui==0.98.3
+ebcdic==1.1.1
 email_validator==2.2.0
+exceptiongroup==1.3.1
 extract-msg==0.45.0
 Flask==3.1.3
 gunicorn==23.0.0
 idna==3.15
+IMAPClient==2.3.1
 inflect==7.5.0
 ioc-fanger==4.2.1
 ioc-finder==7.3.0
 itsdangerous==2.2.0
 Jinja2==3.1.6
+lark==1.3.1
 MarkupSafe==3.0.2
 more-itertools==10.6.0
+msoffcrypto-tool==6.0.0
 number-tools==0.1.0
+olefile==0.46
+oletools==0.60.2
 packaging==24.2
+pcodedmp==1.2.6
+pycparser==3.0
 pyparsing==3.0.9
 pypdf==6.16.1
 python-dateutil==2.9.0.post0
+red-black-tree-mod==1.20
+RTFDE==0.1.2.2
 six==1.17.0
 sortedcontainers==2.4.0
 soupsieve==2.9.2
 typeguard==4.4.2
 typing_extensions==4.12.2
+tzlocal==5.4.4
 Werkzeug==3.1.6

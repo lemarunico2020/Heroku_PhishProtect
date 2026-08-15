@@ -52,7 +52,7 @@ El servicio está diseñado para integrarse fácilmente en flujos de trabajo de 
 
 Requiere Docker. `docker build .` produce una imagen productiva (usuario no-root, basada en `python:3.12-slim`) que expone el mismo comportamiento que en Heroku.
 
-**Tamaño de la imagen:** `requirements.txt` se instala con `pip install --no-deps` a propósito. `d8s-math`/`d8s-strings` (dependencias de `ioc-finder`) declaran `sympy`, `mpmath`, `hypothesis` y `d8s-hypothesis` como requeridas, pero el código real de `ioc-finder` nunca las importa (verificado corriendo la app completa sin ellas). Excluirlas reduce el tamaño instalado en ~75% (~112MB → ~27MB). Si agregás una dependencia nueva a `requirements.txt`, agregala de forma explícita (con sus propias transitivas): con `--no-deps` pip no las resuelve solo.
+**Tamaño de la imagen:** `requirements.txt` se instala con `pip install --no-deps` a propósito. `d8s-math`/`d8s-strings` (dependencias de `ioc-finder`) declaran `sympy`, `mpmath`, `hypothesis` y `d8s-hypothesis` como requeridas, pero el código real de `ioc-finder` nunca las importa (verificado end-to-end, incluido el parseo de un `.msg` real). Excluirlas reduce el tamaño instalado en ~55% (~112MB → ~51MB). Si agregás una dependencia nueva a `requirements.txt`, agregala de forma explícita (con sus propias transitivas, generadas desde un `pip install` limpio sin `--no-deps`): con `--no-deps` pip no las resuelve solo, y si falta alguna el contenedor arranca pero el worker de gunicorn falla con un `ImportError` (no se detecta en el build, solo al arrancar).
 
 **Local, con Docker directamente:**
 
