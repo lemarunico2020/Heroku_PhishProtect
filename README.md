@@ -48,7 +48,43 @@ El servicio está diseñado para integrarse fácilmente en flujos de trabajo de 
 3. Configura el nombre de tu aplicación
 4. Haz clic en "Deploy app"
 
-### Opción 2: Instalación Local
+### Opción 2: Docker / EasyPanel
+
+Requiere Docker. `docker build .` produce una imagen productiva (usuario no-root, basada en `python:3.12-slim`) que expone el mismo comportamiento que en Heroku.
+
+**Local, con Docker directamente:**
+
+```bash
+docker build -t phishprotect:test .
+docker run -e PHISHPROTECT_API_KEY=tu-api-key -p 5001:5001 phishprotect:test
+curl -X POST -F "email_file=@tests/fixtures/sample_phishing.eml" -H "X-API-Key: tu-api-key" http://localhost:5001/api/v1/analyze_email
+```
+
+**Local, con `docker-compose.yml` (un solo comando):**
+
+```bash
+PHISHPROTECT_API_KEY=tu-api-key docker compose up --build
+```
+
+**En EasyPanel:**
+
+1. Crear un nuevo servicio de tipo "App" apuntando a este repositorio (EasyPanel detecta el `Dockerfile` automáticamente) o subir la imagen ya construida a un registro.
+2. Configurar las variables de entorno requeridas (ver tabla abajo) — **nunca** se hardcodean en el `Dockerfile` ni en la imagen, se inyectan en tiempo de ejecución.
+3. Configurar el puerto expuesto: el contenedor escucha en `$PORT` (por defecto `5001` si no se define).
+4. Si EasyPanel pide una ruta de healthcheck HTTP, usar `/` (no requiere API Key). El Dockerfile ya incluye un `HEALTHCHECK` propio sobre esa misma ruta. **Nunca** usar `/api/v1/check_auth` como healthcheck público: exige la API Key real y la expondría en la configuración de infraestructura.
+
+| Variable | Requerida | Descripción | Valor por defecto |
+|---|---|---|---|
+| `PHISHPROTECT_API_KEY` | Sí | API Key que deben presentar los clientes | *(ninguno — sin definirla, la app arranca con una key de desarrollo insegura y lo advierte en el log)* |
+| `PORT` | No | Puerto en el que escucha gunicorn dentro del contenedor | `5001` |
+| `LOG_LEVEL` | No | Nivel de logging (`DEBUG`/`INFO`/`WARNING`/`ERROR`/`CRITICAL`) | `INFO` |
+| `MAX_FILE_SIZE_MB` / `MAX_CONTENT_SIZE_MB` / `MAX_ATTACHMENT_SIZE_MB` | No | Límites de tamaño (ver sección Requisitos) | `18` / `2` / `10` |
+| `ALLOWLIST_DOMAINS_PATH` / `ALLOWLIST_EMAILS_PATH` | No | Rutas a los archivos de allowlist | `config/allowlist_domains.txt` / `config/allowlist_emails.txt` |
+| `WEB_CONCURRENCY` / `GUNICORN_THREADS` / `GUNICORN_TIMEOUT` | No | Tuning de gunicorn (ver sección "Configuración de gunicorn") | `2` / `2` / `60` |
+
+El `.dockerignore` excluye del build todo lo que no hace falta en runtime (`.git/`, `tests/`, `docs/`, logs, entornos virtuales, `.env` local, etc.); el directorio `config/` sí se incluye porque de ahí se leen los archivos de allowlist.
+
+### Opción 3: Instalación Local
 
 ```bash
 # Clonar el repositorio
@@ -83,6 +119,9 @@ parsers/
   attachments.py        # Extracción de texto de adjuntos TXT/HTML/PDF (compartido entre eml.py y msg.py)
 config/                # Archivos de configuración en texto plano (allowlist_domains.txt, allowlist_emails.txt) — NO es un paquete Python
 tests/                 # Suite de pytest
+Dockerfile              # Imagen productiva (HU-13)
+.dockerignore
+docker-compose.yml     # Opcional, para levantar el servicio localmente en un solo comando
 ```
 
 **Nota de nombres:** el módulo de configuración se llama `settings.py` y no `config.py` para evitar la colisión con el directorio `config/` ya existente (los archivos de texto plano de la allowlist de HU-03). Python resuelve esa colisión de forma determinista, pero es una fuente de confusión evitable.

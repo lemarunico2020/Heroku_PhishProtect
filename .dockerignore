@@ -1,0 +1,51 @@
+# Control de versiones
+.git/
+.gitignore
+.gitattributes
+
+# Entornos virtuales
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.hypothesis/
+
+# Logs de la aplicacion (se generan en runtime, no deben venir en la imagen)
+ioc_finder.log
+*.log
+
+# Muestras de correo reales para pruebas manuales (nunca deben subirse a ningun lado)
+samples/
+
+# Archivos de entorno local / secretos (las variables de entorno se inyectan en runtime)
+.env
+.env.*
+
+# Tests, documentacion y archivos de gestion del proyecto (no hacen falta en runtime)
+tests/
+docs/
+.claude/
+sprints-historias-usuario.md
+status.md
+readme.md
+README.md
+LICENSE
+
+# Archivos especificos de otras plataformas de despliegue (no aplican a Docker)
+Procfile
+runtime.txt
+requirements-dev.txt
+
+# Editores/IDE
+.vscode/
+.idea/
+
+# El propio contexto de build de Docker
+Dockerfile
+.dockerignore
+docker-compose.yml

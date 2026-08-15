@@ -1,0 +1,23 @@
+# Levanta PhishProtect localmente en un solo comando (HU-13, opcional):
+#   docker compose up --build
+#
+# Configura tu propia API Key antes de levantar el servicio:
+#   PHISHPROTECT_API_KEY=una-clave-segura docker compose up --build
+# (o crea un archivo .env con PHISHPROTECT_API_KEY=... junto a este archivo;
+# .env nunca se sube al repo, ver .gitignore/.dockerignore)
+services:
+  phishprotect:
+    build: .
+    ports:
+      - "${PORT:-5001}:${PORT:-5001}"
+    environment:
+      PHISHPROTECT_API_KEY: ${PHISHPROTECT_API_KEY:?Definí PHISHPROTECT_API_KEY antes de levantar el servicio}
+      PORT: ${PORT:-5001}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MAX_FILE_SIZE_MB: ${MAX_FILE_SIZE_MB:-18}
+      MAX_CONTENT_SIZE_MB: ${MAX_CONTENT_SIZE_MB:-2}
+      MAX_ATTACHMENT_SIZE_MB: ${MAX_ATTACHMENT_SIZE_MB:-10}
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
+      GUNICORN_THREADS: ${GUNICORN_THREADS:-2}
+      GUNICORN_TIMEOUT: ${GUNICORN_TIMEOUT:-60}
+    restart: unless-stopped
