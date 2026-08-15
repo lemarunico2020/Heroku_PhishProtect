@@ -1,10 +1,24 @@
+# Lista completa y "aplanada" (todas las dependencias directas y
+# transitivas, no solo las de primer nivel). El Dockerfile la instala
+# con `pip install --no-deps`, por eso: si agregas una dependencia
+# nueva, agregala EXPLICITAMENTE aca (incluidas sus propias
+# transitivas), o el build de Docker fallara con un ImportError.
+#
+# sympy, mpmath, hypothesis y d8s-hypothesis se quitaron a propósito
+# (verificado 2026-08-15): son dependencias declaradas por d8s-math/
+# d8s-strings pero jamas se importan en el camino real de find_iocs()
+# (sympy solo se usa dentro de funciones de d8s-math que nadie llama;
+# hypothesis es un framework de testing que varios paquetes d8s-*
+# declaran como dependencia de runtime sin necesitarlo en la práctica).
+# Quitarlas reduce el tamaño instalado de ~112MB a ~27MB (-75%). Sin
+# --no-deps, pip las reinstalaria igual para satisfacer esas
+# declaraciones (por eso no alcanza con solo borrar estas lineas).
 attrs==25.1.0
 beautifulsoup4==4.12.3
 blinker==1.9.0
 click==8.3.3
 colorama==0.4.6
 d8s-dicts==0.6.0
-d8s-hypothesis==0.6.0
 d8s-lists==0.8.0
 d8s-math==0.7.0
 d8s-strings==0.5.0
@@ -15,7 +29,6 @@ email_validator==2.2.0
 extract-msg==0.45.0
 Flask==3.1.3
 gunicorn==23.0.0
-hypothesis==6.127.4
 idna==3.15
 inflect==7.5.0
 ioc-fanger==4.2.1
@@ -24,7 +37,6 @@ itsdangerous==2.2.0
 Jinja2==3.1.6
 MarkupSafe==3.0.2
 more-itertools==10.6.0
-mpmath==1.3.0
 number-tools==0.1.0
 packaging==24.2
 pyparsing==3.0.9
@@ -33,7 +45,6 @@ python-dateutil==2.9.0.post0
 six==1.17.0
 sortedcontainers==2.4.0
 soupsieve==2.9.2
-sympy==1.13.3
 typeguard==4.4.2
 typing_extensions==4.12.2
 Werkzeug==3.1.6
