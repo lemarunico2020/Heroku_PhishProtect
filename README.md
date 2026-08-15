@@ -70,10 +70,13 @@ PHISHPROTECT_API_KEY=tu-api-key docker compose up --build
 
 **En EasyPanel:**
 
-1. Crear un nuevo servicio de tipo "App" apuntando a este repositorio (EasyPanel detecta el `Dockerfile` automáticamente) o subir la imagen ya construida a un registro.
-2. Configurar las variables de entorno requeridas (ver tabla abajo) — **nunca** se hardcodean en el `Dockerfile` ni en la imagen, se inyectan en tiempo de ejecución.
-3. Configurar el puerto expuesto: el contenedor escucha en `$PORT` (por defecto `5001` si no se define).
-4. Si EasyPanel pide una ruta de healthcheck HTTP, usar `/` (no requiere API Key). El Dockerfile ya incluye un `HEALTHCHECK` propio sobre esa misma ruta. **Nunca** usar `/api/v1/check_auth` como healthcheck público: exige la API Key real y la expondría en la configuración de infraestructura.
+1. Crear un proyecto y, dentro de él, un servicio nuevo de tipo **"App"**.
+2. Como fuente, elegir **GitHub**, autorizar la cuenta si hace falta, y seleccionar este repositorio y la rama `main` (ruta de compilación `/`, la raíz del repo).
+3. En la sección **"Compilación"**, elegir el método **"Dockerfile"** (no Nixpacks/Buildpacks/Railpack) e indicar la ruta `Dockerfile` (relativa a la raíz).
+4. Configurar las variables de entorno requeridas (ver tabla abajo) en la pestaña **"Entorno"** — **nunca** se hardcodean en el `Dockerfile` ni en la imagen, se inyectan en tiempo de ejecución. Tras guardarlas hay que **redesplegar** para que gunicorn las tome (se leen al arrancar, no en caliente).
+5. En la pestaña **"Dominios"**, al asociar el dominio/subdominio, configurar el **puerto de destino** al mismo valor de `PORT` (`5001` si no se cambió — EasyPanel suele proponer `80` por defecto, hay que cambiarlo).
+6. Si EasyPanel pide una ruta de healthcheck HTTP aparte, usar `/` (no requiere API Key). El Dockerfile ya incluye un `HEALTHCHECK` propio sobre esa misma ruta. **Nunca** usar `/api/v1/check_auth` como healthcheck público: exige la API Key real y la expondría en la configuración de infraestructura.
+7. Lanzar el deploy. Si el contenedor no llega a levantar, revisar los **logs de build** (compilación de la imagen) por separado de los **logs de runtime/Registros** (arranque de gunicorn) — son pestañas distintas y los errores de cada etapa son muy diferentes entre sí (un build en verde no garantiza que el contenedor arranque).
 
 | Variable | Requerida | Descripción | Valor por defecto |
 |---|---|---|---|
@@ -130,66 +133,105 @@ docker-compose.yml     # Opcional, para levantar el servicio localmente en un so
 
 ## Uso
 
-### Endpoint API
+### Verificar la API Key
 
-La API ofrece un endpoint principal para el análisis de archivos EML:
+```bash
+curl -H "X-API-Key: tu-api-key" https://tu-dominio.com/api/v1/check_auth
+```
 
+```json
+{
+  "status": "success",
+  "timestamp": "2026-08-15T20:56:23.256137+00:00",
+  "version": "1.1",
+  "data": { "message": "API Key válida" }
+}
+```
+
+### Analizar un correo
+
+La API ofrece un endpoint principal para el análisis de archivos EML o MSG (detecta el formato automáticamente):
+
+```
 POST /api/v1/analyze_email
+```
 
-Este endpoint detectará automáticamente si el archivo es EML o MSG y lo procesará adecuadamente.
+(También existen `/api/v1/analyze_eml` y `/api/v1/analyze_msg` como endpoints legacy, que exigen el formato correspondiente.)
 
 #### Ejemplo de solicitud con cURL:
 
-# Usando el endpoint unificado
-curl -X POST -F "email_file=@correo_sospechoso.eml" -H "X-API-Key: tu-api-key" https://tu-app.herokuapp.com/api/v1/analyze_email
+```bash
+curl -X POST -F "email_file=@correo_sospechoso.eml" -H "X-API-Key: tu-api-key" https://tu-dominio.com/api/v1/analyze_email
+```
 
-#### Ejemplo de respuesta:
+#### Ejemplo de respuesta (esquema completo actual):
 
+```json
 {
   "status": "success",
-  "timestamp": "2025-03-03T12:34:56.789012",
+  "timestamp": "2026-08-15T20:58:35.523181Z",
   "version": "1.1",
   "data": {
     "analysis_metadata": {
-      "analysis_id": "IOC-20250303-123456-789",
-      "analysis_timestamp": "2025-03-03T12:34:56.789012",
-      "file_analyzed": "correo_sospechoso.eml",
+      "analysis_id": "IOC-20260815-205835-522",
+      "analysis_timestamp": "2026-08-15T20:58:35.522259Z",
+      "file_analyzed": "/tmp/tmp22n67fs4.eml",
       "file_type": "eml"
     },
     "email_metadata": {
       "from": "remitente@dominio-sospechoso.com",
       "to": "destinatario@empresa.com",
       "subject": "Actualización de seguridad urgente",
-      "date": "2025-03-02T10:15:30",
+      "date": "2026-08-15T10:15:30+00:00",
       "body_extracted": true,
       "body": "Contenido del correo...",
-  },
+      "attachments": [
+        { "filename": "documento.pdf", "content_type": "application/pdf", "size": 12345,
+          "hashes": { "md5": "...", "sha1": "...", "sha256": "..." } }
+      ],
+      "authentication": { "spf": "FAIL", "dkim": "FAIL", "dmarc": "FAIL" }
+    },
+    "cabeceras_email": {
+      "return_path": "<bounce@dominio-sospechoso.com>",
+      "reply_to": "actor-malicioso@dominio-sospechoso.com",
+      "x_originating_ip": "[203.0.113.10]",
+      "x_mailer": null,
+      "received_chain": ["from mx1.dominio-sospechoso.com ..."],
+      "authentication_results": "spf=fail ...",
+      "originating_ip_guess": "203.0.113.10"
+    },
     "findings": {
       "network_indicators": {
         "domains": ["dominio-malicioso.com", "servidor-c2.net"],
-        "ipv4": ["192.168.1.1", "10.0.0.1"],
+        "ipv4": ["192.168.1.1"],
+        "ipv6": [],
         "urls": ["https://dominio-malicioso.com/payload.php"],
-        "email_addresses": ["actor-malicioso@dominio-sospechoso.com"]
+        "email_addresses": ["actor-malicioso@dominio-sospechoso.com"],
+        "asns": [],
+        "cidr_ranges": []
       },
       "file_indicators": {
-        "md5_hashes": ["a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6"],
-        "sha256_hashes": ["a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6..."]
+        "md5_hashes": ["5d41402abc4b2a76b9719d911017c592"],
+        "sha1_hashes": [],
+        "sha256_hashes": [],
+        "sha512_hashes": [],
+        "file_paths": []
       },
       "system_indicators": {
-        "registry_keys": ["HKEY_LOCAL_MACHINE\\Software\\Malware"]
+        "registry_keys": [],
+        "mac_addresses": [],
+        "user_agents": []
       }
     }
   }
 }
+```
 
-## Interfaz Web
+`originating_ip_guess`, `cabeceras_email` y los campos de `findings` distintos de `domains`/`ipv4`/`urls`/`email_addresses`/`md5_hashes`/`sha256_hashes` son adiciones incrementales al contrato original — nunca se elimina ni renombra una clave existente (ver [docs/sprints-historias-usuario.md](docs/sprints-historias-usuario.md), restricción no negociable de todas las HU).
 
-La aplicación también incluye una interfaz web básica para probar la API directamente desde el navegador:
+## Página principal
 
-Accede a tu aplicación en https://tu-app.herokuapp.com/
-Selecciona un archivo EML o MSG
-Haz clic en "Analizar"
-Visualiza los resultados formateados
+`GET /` (sin autenticación) devuelve una página HTML informativa con la lista de endpoints disponibles y cómo autenticarse — útil como página de estado/healthcheck rápido, pero **no** es un formulario interactivo para subir y analizar correos desde el navegador (el análisis siempre se hace vía la API, con `curl`, Postman, n8n, etc.).
 
 ## Formatos soportados
 
