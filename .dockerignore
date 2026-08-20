@@ -36,9 +36,7 @@ readme.md
 README.md
 LICENSE
 
-# Archivos especificos de otras plataformas de despliegue (no aplican a Docker)
-Procfile
-runtime.txt
+# Archivos de desarrollo que no hacen falta en runtime
 requirements-dev.txt
 
 # Editores/IDE

@@ -41,16 +41,11 @@ El servicio está diseñado para integrarse fácilmente en flujos de trabajo de 
 
 ## Instalación y Despliegue
 
-### Opción 1: Despliegue en Heroku (Recomendado)
+PhishProtect es una API independiente, dockerizada, sin dependencia de ninguna plataforma en particular. El método soportado es Docker (directo o vía EasyPanel).
 
-1. Haz clic en el botón "Deploy to Heroku" arriba
-2. Regístrate o inicia sesión en Heroku
-3. Configura el nombre de tu aplicación
-4. Haz clic en "Deploy app"
+### Opción 1: Docker / EasyPanel (recomendado para producción)
 
-### Opción 2: Docker / EasyPanel
-
-Requiere Docker. `docker build .` produce una imagen productiva (usuario no-root, basada en `python:3.12-slim`) que expone el mismo comportamiento que en Heroku.
+`docker build .` produce una imagen productiva (usuario no-root, basada en `python:3.12-slim`).
 
 **Tamaño de la imagen:** `requirements.txt` se instala con `pip install --no-deps` a propósito. `d8s-math`/`d8s-strings` (dependencias de `ioc-finder`) declaran `sympy`, `mpmath`, `hypothesis` y `d8s-hypothesis` como requeridas, pero el código real de `ioc-finder` nunca las importa (verificado end-to-end, incluido el parseo de un `.msg` real). Excluirlas reduce el tamaño instalado en ~55% (~112MB → ~51MB). Si agregás una dependencia nueva a `requirements.txt`, agregala de forma explícita (con sus propias transitivas, generadas desde un `pip install` limpio sin `--no-deps`): con `--no-deps` pip no las resuelve solo, y si falta alguna el contenedor arranca pero el worker de gunicorn falla con un `ImportError` (no se detecta en el build, solo al arrancar).
 
@@ -89,7 +84,7 @@ PHISHPROTECT_API_KEY=tu-api-key docker compose up --build
 
 El `.dockerignore` excluye del build todo lo que no hace falta en runtime (`.git/`, `tests/`, `docs/`, logs, entornos virtuales, `.env` local, etc.); el directorio `config/` sí se incluye porque de ahí se leen los archivos de allowlist.
 
-### Opción 3: Instalación Local
+### Opción 2: Instalación local (desarrollo)
 
 ```bash
 # Clonar el repositorio
@@ -268,10 +263,10 @@ Las rutas son configurables vía variables de entorno:
 
 ## Configuración de gunicorn (producción)
 
-El comando de arranque en producción (`Procfile`) es configurable vía variables de entorno, sin tocar código:
+El comando de arranque en producción (`CMD` del `Dockerfile`) es configurable vía variables de entorno, sin tocar código:
 
 ```
-web: gunicorn -w ${WEB_CONCURRENCY:-2} --threads ${GUNICORN_THREADS:-2} -k gthread --timeout ${GUNICORN_TIMEOUT:-60} app:app
+gunicorn -w ${WEB_CONCURRENCY:-2} --threads ${GUNICORN_THREADS:-2} -k gthread --timeout ${GUNICORN_TIMEOUT:-60} -b 0.0.0.0:${PORT:-5001} app:app
 ```
 
 | Variable | Descripción | Valor por defecto |
