@@ -11,6 +11,7 @@ from ioc_finder import find_iocs
 import ioc_fanger
 
 from settings import logger
+import whois_lookup
 
 
 def calculate_file_hashes(file_data):
@@ -170,6 +171,44 @@ def guess_originating_ip(received_chain):
     return None
 
 
+def _build_sender_domain_whois_info(email_from):
+    """
+    Construye el bloque info_dominio_remitente a partir del header From.
+    Defensa en profundidad: whois_lookup ya garantiza no lanzar
+    excepciones, pero este try/except adicional asegura que un problema
+    de WHOIS jamas tumbe el analisis completo del correo.
+
+    Se llama a whois_lookup.X() con acceso calificado al modulo (no
+    `from whois_lookup import X`) a proposito: los tests mockean
+    whois_lookup.lookup_domain_info para nunca salir a la red real
+    (conftest.py, fixture autouse), y ese mock solo surte efecto si la
+    resolucion del nombre ocurre en tiempo de llamada sobre el modulo.
+    """
+    try:
+        dominio_remitente = whois_lookup.extract_registrable_domain(email_from)
+        whois_info = whois_lookup.lookup_domain_info(dominio_remitente)
+        return {
+            "dominio_remitente": dominio_remitente,
+            "fecha_creacion_dominio": whois_info["fecha_creacion_dominio"],
+            "dominio_registrado_en": whois_info["dominio_registrado_en"],
+            "pais": whois_info["pais"],
+            "dnssec": whois_info["dnssec"],
+            "estado_bloqueado": None,
+            "whois_ok": whois_info["whois_ok"],
+        }
+    except Exception as e:
+        logger.warning(f"Fallo inesperado construyendo info_dominio_remitente: {str(e)}")
+        return {
+            "dominio_remitente": None,
+            "fecha_creacion_dominio": None,
+            "dominio_registrado_en": None,
+            "pais": None,
+            "dnssec": None,
+            "estado_bloqueado": None,
+            "whois_ok": False,
+        }
+
+
 def build_analysis_result(file_path, file_type, email_from, email_to, subject, email_date,
                          email_body, attachments, auth_results, email_headers, structured_iocs):
     """
@@ -209,5 +248,6 @@ def build_analysis_result(file_path, file_type, email_from, email_to, subject, e
             "authentication_results": email_headers["authentication_results"],
             "originating_ip_guess": guess_originating_ip(email_headers["received_chain"])
         },
+        "info_dominio_remitente": _build_sender_domain_whois_info(email_from),
         "findings": structured_iocs
     }
